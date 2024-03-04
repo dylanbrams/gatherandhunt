@@ -67,6 +67,8 @@ void ULevelSave::Serialize(FArchive& Ar)
 		Ar << ArraySize; // Save the size of the array
 		for (FPieceSaveData& Data : PieceSaveDataArray)
 		{
+			Ar << Data.PieceSaveID;
+			Ar << Data.PieceOwnerID;
 			Ar << Data.Position;
 			Ar << Data.Rotation;
 			Ar << Data.Scale;
@@ -84,6 +86,8 @@ void ULevelSave::Serialize(FArchive& Ar)
 		SavedPieces.Reserve(ArraySize);
 		for (FPieceSaveData& Data : PieceSaveDataArray)
 		{
+			Ar << Data.PieceSaveID;
+			Ar << Data.PieceOwnerID;
 			Ar << Data.Position;
 			Ar << Data.Rotation;
 			Ar << Data.Scale;

@@ -28,5 +28,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	PieceTypeEnum PieceType; // Or use an enum, if you have a finite set of piece types
 
-	// Add other necessary properties here
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	int PieceSaveID; // Or use an enum, if you have a finite set of piece types
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	int PieceOwnerID; // Or use an enum, if you have a finite set of piece types
+	
 };
