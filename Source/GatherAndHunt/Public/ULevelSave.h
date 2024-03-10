@@ -31,9 +31,6 @@ public:
 	TArray<FPieceSaveData> PieceSaveDataArray;
 	
 	UFUNCTION(BlueprintCallable)
-	bool SerializeObjectToJsonString(ULevelSave* Obj, FString& OutJsonString);
-
-	UFUNCTION(BlueprintCallable)
 	bool SerializeObjectToArchive(UObject* Object, const FString& Filename);
 
 	UFUNCTION(BlueprintCallable)

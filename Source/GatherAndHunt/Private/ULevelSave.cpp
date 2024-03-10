@@ -6,18 +6,6 @@
 
 
 
-bool ULevelSave::SerializeObjectToJsonString(ULevelSave* Obj, FString& OutJsonString)
-{
-	if (Obj == nullptr)
-	{
-		return false;
-	}
-
-	FJsonObjectConverter::UStructToJsonObjectString(Obj->GetClass(), Obj, OutJsonString, 0, 0);
-	return true;
-}
-
-
 bool ULevelSave::SerializeObjectToArchive(UObject* Object, const FString& Filename)
 {
 	if (!Object) return false;
