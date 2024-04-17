@@ -21,6 +21,13 @@ class GATHERANDHUNT_API ULevelSave : public UObject
 	GENERATED_BODY()
 	
 public:
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	FString LevelName;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	int32 LevelID;
+	
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	FVector GridSize;
 

@@ -50,6 +50,8 @@ void ULevelSave::Serialize(FArchive& Ar)
 	// Explicitly serialize an array property
 	if (Ar.IsSaving())
 	{
+		Ar << LevelName;
+		Ar << LevelID;
 		Ar << GridSize;
 		int32 ArraySize = SavedPieces.Num();
 		Ar << ArraySize; // Save the size of the array
@@ -66,7 +68,8 @@ void ULevelSave::Serialize(FArchive& Ar)
 	}
 	else if (Ar.IsLoading())
 	{
-	
+		Ar << LevelName;
+		Ar << LevelID;
 		Ar << GridSize;
 		int32 ArraySize;
 		Ar << ArraySize; // Load the size of the array
