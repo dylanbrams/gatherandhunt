@@ -27,6 +27,15 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	int32 LevelID;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	int32 TargetObjectiveCount;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	int32 TargetTurnCount;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	int32 AvailableActionsID;
 	
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	FVector GridSize;

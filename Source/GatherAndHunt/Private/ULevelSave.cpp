@@ -52,7 +52,11 @@ void ULevelSave::Serialize(FArchive& Ar)
 	{
 		Ar << LevelName;
 		Ar << LevelID;
+		Ar << AvailableActionsID;
 		Ar << GridSize;
+		Ar << TargetObjectiveCount;
+		Ar << TargetTurnCount;
+		
 		int32 ArraySize = SavedPieces.Num();
 		Ar << ArraySize; // Save the size of the array
 		for (FPieceSaveData& Data : PieceSaveDataArray)
@@ -70,7 +74,11 @@ void ULevelSave::Serialize(FArchive& Ar)
 	{
 		Ar << LevelName;
 		Ar << LevelID;
+		Ar << AvailableActionsID;
 		Ar << GridSize;
+		Ar << TargetObjectiveCount;
+		Ar << TargetTurnCount;
+		
 		int32 ArraySize;
 		Ar << ArraySize; // Load the size of the array
 		SavedPieces.Empty(); // Ensure the array is empty before loading
