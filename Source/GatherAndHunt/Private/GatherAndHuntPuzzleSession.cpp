@@ -102,6 +102,7 @@ bool UGatherAndHuntPuzzleSession::LoadPuzzleFromLevelSave(ULevelSave* LevelSave)
 	bHasLastPlaybackStartBoardState = false;
 	bHasLastTurnResult = false;
 	Outcome = EGatherAndHuntPuzzleOutcome::InProgress;
+	bHasUnsavedChanges = false;
 	EvaluateOutcome();
 	return true;
 }
@@ -174,6 +175,67 @@ turtlesim::TurnPlan UGatherAndHuntPuzzleSession::BuildOpponentPlanForCurrentTurn
 		OpponentPlan = ConvertScriptedOpponentTurn(*ScriptedTurn);
 	}
 	return OpponentPlan;
+}
+
+bool UGatherAndHuntPuzzleSession::HasScriptedOpponentTurn(const int32 TurnNumber) const
+{
+	return FindScriptedOpponentTurn(LoadedLevelSave, TurnNumber) != nullptr;
+}
+
+FGatherAndHuntPuzzleTurnPlan UGatherAndHuntPuzzleSession::GetScriptedOpponentTurn(const int32 TurnNumber) const
+{
+	FGatherAndHuntPuzzleTurnPlan Plan;
+	if (const FScriptedOpponentTurnData* const TurnData = FindScriptedOpponentTurn(LoadedLevelSave, TurnNumber))
+	{
+		for (const FScriptedPuzzleTurtlePlanData& TurtlePlanData : TurnData->TurtlePlans)
+		{
+			FGatherAndHuntPuzzleTurtlePlan& TurtlePlan = Plan.TurtlePlans.AddDefaulted_GetRef();
+			TurtlePlan.TurtleId = TurtlePlanData.TurtleId;
+			TurtlePlan.Moves = TurtlePlanData.Moves;
+		}
+	}
+	return Plan;
+}
+
+bool UGatherAndHuntPuzzleSession::SetScriptedOpponentTurn(const int32 TurnNumber, const FGatherAndHuntPuzzleTurnPlan& TurnPlan)
+{
+	if (LoadedLevelSave == nullptr || TurnNumber < 0)
+	{
+		return false;
+	}
+
+	TArray<FScriptedOpponentTurnData>& Turns = LoadedLevelSave->ScriptedOpponentTurns;
+	Turns.RemoveAll([TurnNumber](const FScriptedOpponentTurnData& TurnData) { return TurnData.TurnNumber == TurnNumber; });
+
+	FScriptedOpponentTurnData NewTurn;
+	NewTurn.TurnNumber = TurnNumber;
+	for (const FGatherAndHuntPuzzleTurtlePlan& TurtlePlan : TurnPlan.TurtlePlans)
+	{
+		if (TurtlePlan.Moves.Num() > 0)
+		{
+			FScriptedPuzzleTurtlePlanData& Data = NewTurn.TurtlePlans.AddDefaulted_GetRef();
+			Data.TurtleId = TurtlePlan.TurtleId;
+			Data.Moves = TurtlePlan.Moves;
+		}
+	}
+	if (NewTurn.TurtlePlans.Num() > 0)
+	{
+		Turns.Add(MoveTemp(NewTurn));
+		Turns.Sort([](const FScriptedOpponentTurnData& A, const FScriptedOpponentTurnData& B) { return A.TurnNumber < B.TurnNumber; });
+	}
+	bHasUnsavedChanges = true;
+	return true;
+}
+
+bool UGatherAndHuntPuzzleSession::SavePuzzleToProjectFile(const FString& RelativeFilename)
+{
+	if (LoadedLevelSave == nullptr || RelativeFilename.IsEmpty()
+		|| !UGatherAndHuntLevelEditorLibrary::SaveLevelSaveToProjectFile(LoadedLevelSave, RelativeFilename))
+	{
+		return false;
+	}
+	bHasUnsavedChanges = false;
+	return true;
 }
 
 const FString& UGatherAndHuntPuzzleSession::GetLoadedPuzzleName() const

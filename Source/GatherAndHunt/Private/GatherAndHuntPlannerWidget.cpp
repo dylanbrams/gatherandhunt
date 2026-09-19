@@ -34,14 +34,17 @@ namespace
 		ClearAll,
 		Submit,
 		SkipPlayback,
-		FrameBoard
+		FrameBoard,
+		ToggleSide,
+		RevertOpponent
 	};
 
 	enum class EFileCommand : int32
 	{
 		Load,
 		Reset,
-		RefreshList
+		RefreshList,
+		Save
 	};
 
 	const FLinearColor PanelColor(0.02f, 0.02f, 0.03f, 0.78f);
@@ -191,6 +194,27 @@ UGatherAndHuntPlannerButton* UGatherAndHuntPlannerWidget::MakeButton(
 	return Button;
 }
 
+void UGatherAndHuntPlannerWidget::ShowMessage(const FString& Message, const bool bIsError)
+{
+	if (MessageText != nullptr)
+	{
+		MessageText->SetText(FText::FromString(Message));
+		MessageText->SetColorAndOpacity(FSlateColor(bIsError ? ErrorColor : GoodColor));
+	}
+}
+
+FString UGatherAndHuntPlannerWidget::GetLoadedPuzzleFile() const
+{
+	const UWorld* const World = GetWorld();
+	const AGatherAndHuntPuzzleGameMode* const GameMode = World != nullptr ? World->GetAuthGameMode<AGatherAndHuntPuzzleGameMode>() : nullptr;
+	if (GameMode == nullptr || GameMode->AutoLoadPuzzleRelativeFilename.IsEmpty())
+	{
+		return FString();
+	}
+	const FString& File = GameMode->AutoLoadPuzzleRelativeFilename;
+	return File.EndsWith(TEXT(".dat")) ? File : File + TEXT(".dat");
+}
+
 UWidget* UGatherAndHuntPlannerWidget::MakePanel(UWidget* Content)
 {
 	UBorder* const Panel = WidgetTree->ConstructWidget<UBorder>();
@@ -258,7 +282,11 @@ void UGatherAndHuntPlannerWidget::BuildTree()
 		AddCell(FileRow, MakeButton(TEXT("Load"), static_cast<int32>(EFileCommand::Load), &UGatherAndHuntPlannerWidget::OnFileButton));
 		AddCell(FileRow, MakeButton(TEXT("Reset"), static_cast<int32>(EFileCommand::Reset), &UGatherAndHuntPlannerWidget::OnFileButton));
 		AddCell(FileRow, MakeButton(TEXT("Rescan"), static_cast<int32>(EFileCommand::RefreshList), &UGatherAndHuntPlannerWidget::OnFileButton));
+		AddCell(FileRow, MakeButton(TEXT("Save file (Ctrl+S)"), static_cast<int32>(EFileCommand::Save), &UGatherAndHuntPlannerWidget::OnFileButton));
 		AddRow(Info, FileRow, 8.0f);
+
+		MessageText = MakeText(TEXT(""), 10, GoodColor);
+		AddRow(Info, MessageText, 4.0f);
 
 		Place(MakePanel(Info), FVector2D(0.0f, 0.0f), FVector2D(16.0f, 16.0f));
 	}
@@ -266,7 +294,10 @@ void UGatherAndHuntPlannerWidget::BuildTree()
 	// --- Left: turtle list --------------------------------------------------
 	{
 		UVerticalBox* const Turtles = WidgetTree->ConstructWidget<UVerticalBox>();
-		AddRow(Turtles, MakeText(TEXT("TURTLES  (Tab / 1-9)"), 10, DimTextColor), 0.0f);
+		SideButton = MakeButton(TEXT(""), static_cast<int32>(EEditCommand::ToggleSide), &UGatherAndHuntPlannerWidget::OnEditButton, 10);
+		SideLabel = Cast<UTextBlock>(SideButton->GetContent());
+		AddRow(Turtles, SideButton, 0.0f);
+		AddRow(Turtles, MakeText(TEXT("TURTLES  (Tab / 1-9)"), 10, DimTextColor), 6.0f);
 		TurtleList = WidgetTree->ConstructWidget<UVerticalBox>();
 		AddRow(Turtles, TurtleList, 4.0f);
 		Place(MakePanel(Turtles), FVector2D(0.0f, 0.5f), FVector2D(16.0f, 0.0f));
@@ -294,15 +325,19 @@ void UGatherAndHuntPlannerWidget::BuildTree()
 		AddRow(Preview, ValidationSize, 6.0f);
 
 		UHorizontalBox* const SubmitRow = WidgetTree->ConstructWidget<UHorizontalBox>();
-		SubmitButton = MakeButton(TEXT("  SUBMIT TURN (Enter)  "), static_cast<int32>(EEditCommand::Submit), &UGatherAndHuntPlannerWidget::OnEditButton, 13);
+		SubmitButton = MakeButton(TEXT(""), static_cast<int32>(EEditCommand::Submit), &UGatherAndHuntPlannerWidget::OnEditButton, 13);
+		SubmitLabel = Cast<UTextBlock>(SubmitButton->GetContent());
 		AddCell(SubmitRow, SubmitButton);
 		AddCell(SubmitRow, MakeButton(TEXT("Skip anim"), static_cast<int32>(EEditCommand::SkipPlayback), &UGatherAndHuntPlannerWidget::OnEditButton));
+		RevertButton = MakeButton(TEXT("Revert"), static_cast<int32>(EEditCommand::RevertOpponent), &UGatherAndHuntPlannerWidget::OnEditButton);
+		AddCell(SubmitRow, RevertButton);
 		AddRow(Preview, SubmitRow, 8.0f);
 
 		UTextBlock* const Help = MakeText(
 			TEXT("W fwd   A/D yaw   R/F pitch   S wait\n")
 			TEXT("Bksp delete   [ ] shift   Esc cursor to end\n")
 			TEXT("C clear turtle   Shift+C clear all\n")
+			TEXT("O edit scripted opponent   Ctrl+S save file\n")
 			TEXT("Drag: orbit   Wheel: zoom   Home: reframe"),
 			9, DimTextColor);
 		AddRow(Preview, Help, 10.0f);
@@ -398,6 +433,16 @@ void UGatherAndHuntPlannerWidget::RefreshInfo()
 		Status += FString::Printf(TEXT("    Objectives needed %d"), Session->GetTargetObjectiveCount());
 	}
 	Status += FString::Printf(TEXT("    [%s]"), OutcomeLabel(Session->GetOutcome()));
+	const int32 BoardTurn = Session->GetCurrentTurnNumber();
+	Status += FString::Printf(TEXT("\nScripted opponent this turn: %s"), Session->HasScriptedOpponentTurn(BoardTurn) ? TEXT("yes") : TEXT("none"));
+	if (Planner != nullptr && Planner->HasUnsavedOpponentDraft())
+	{
+		Status += TEXT("   (draft not saved to turn)");
+	}
+	if (Session->HasUnsavedChanges())
+	{
+		Status += TEXT("   * board file has unsaved changes");
+	}
 	StatusText->SetText(FText::FromString(Status));
 	IntroText->SetText(FText::FromString(Session->GetIntroText()));
 }
@@ -469,7 +514,8 @@ void UGatherAndHuntPlannerWidget::RefreshQueue()
 	const int32 SelectedMove = Planner->GetSelectedMoveIndex();
 
 	QueueHeaderText->SetText(FText::FromString(FString::Printf(
-		TEXT("QUEUE  T%d   %s"),
+		TEXT("%s  T%d   %s"),
+		Planner->IsEditingOpponent() ? TEXT("OPPONENT QUEUE") : TEXT("QUEUE"),
 		TurtleId,
 		SelectedMove == INDEX_NONE ? TEXT("(new moves append)") : *FString::Printf(TEXT("(new moves insert after #%d)"), SelectedMove + 1))));
 
@@ -510,6 +556,17 @@ void UGatherAndHuntPlannerWidget::RefreshPreview()
 		OpponentPreviewCheck->SetIsChecked(Planner->GetPreviewIncludesOpponent());
 	}
 
+	const bool bEditingOpponent = Planner != nullptr && Planner->IsEditingOpponent();
+	SideLabel->SetText(FText::FromString(bEditingOpponent
+		? TEXT("Editing: OPPONENT  (O: back to player)")
+		: TEXT("Editing: PLAYER  (O: script opponent)")));
+	SideButton->SetBackgroundColor(bEditingOpponent ? FLinearColor(0.8f, 0.1f, 0.6f) : FLinearColor::White);
+	SubmitLabel->SetText(FText::FromString(bEditingOpponent
+		? FString::Printf(TEXT("  SAVE OPPONENT TURN %d (Enter)  "), (Planner != nullptr ? Planner->GetBoardTurnNumber() : 0) + 1)
+		: FString(TEXT("  SUBMIT TURN (Enter)  "))));
+	RevertButton->SetVisibility(bEditingOpponent ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+	RevertButton->SetIsEnabled(Planner != nullptr && Planner->HasUnsavedOpponentDraft());
+
 	if (Planner == nullptr || !Planner->HasBoard())
 	{
 		PreviewText->SetText(FText::GetEmpty());
@@ -535,7 +592,7 @@ void UGatherAndHuntPlannerWidget::RefreshPreview()
 	{
 		Message = TEXT("Playing turn... (Enter to skip)");
 	}
-	else if (bFinished)
+	else if (bFinished && !bEditingOpponent)
 	{
 		Message = FString::Printf(TEXT("%s. Press Reset to replay the puzzle."), OutcomeLabel(Session->GetOutcome()));
 	}
@@ -550,7 +607,9 @@ void UGatherAndHuntPlannerWidget::RefreshPreview()
 	}
 	ValidationText->SetText(FText::FromString(Message));
 	ValidationText->SetColorAndOpacity(FSlateColor(bFinished && Session->GetOutcome() == EGatherAndHuntPuzzleOutcome::Victory ? GoodColor : ErrorColor));
-	SubmitButton->SetIsEnabled(Planner->CanSubmit() && !bPlaying && !bFinished);
+	SubmitButton->SetIsEnabled(bEditingOpponent
+		? Validation.bIsValid && !bPlaying
+		: Planner->CanSubmit() && !bPlaying && !bFinished);
 }
 
 void UGatherAndHuntPlannerWidget::RefreshPuzzleFiles()
@@ -620,6 +679,8 @@ void UGatherAndHuntPlannerWidget::OnEditButton(const int32 Command)
 	case EEditCommand::Submit: SubmitPlan(); break;
 	case EEditCommand::SkipPlayback: if (BoardView != nullptr) { BoardView->SkipPlayback(); } break;
 	case EEditCommand::FrameBoard: if (BoardView != nullptr) { BoardView->FrameBoard(); } break;
+	case EEditCommand::ToggleSide: Planner->SetEditingOpponent(!Planner->IsEditingOpponent()); break;
+	case EEditCommand::RevertOpponent: Planner->RevertOpponentDraft(); ShowMessage(TEXT("Opponent draft reverted."), false); break;
 	}
 }
 
@@ -647,6 +708,7 @@ void UGatherAndHuntPlannerWidget::OnFileButton(const int32 Command)
 	case EFileCommand::Load: LoadSelectedPuzzle(); break;
 	case EFileCommand::Reset: ResetPuzzle(); break;
 	case EFileCommand::RefreshList: RefreshPuzzleFiles(); break;
+	case EFileCommand::Save: SavePuzzleFile(); break;
 	}
 }
 
@@ -657,9 +719,42 @@ void UGatherAndHuntPlannerWidget::SubmitPlan()
 		return;
 	}
 	FGatherAndHuntPuzzlePlanValidation Result;
-	Planner->Submit(Result);
+	if (Planner->IsEditingOpponent())
+	{
+		const int32 Turn = Planner->GetBoardTurnNumber() + 1;
+		if (Planner->SaveOpponentTurn(Result))
+		{
+			ShowMessage(FString::Printf(TEXT("Saved opponent turn %d to the puzzle. Ctrl+S writes the file."), Turn), false);
+		}
+		else
+		{
+			ShowMessage(FString::Printf(TEXT("Opponent turn not saved: %s"), *Result.ErrorMessage), true);
+		}
+		Refresh();
+		return;
+	}
+
 	// Success clears the plan and starts playback via the planner's events;
 	// failure is reported through the validation text on the next refresh.
+	Planner->Submit(Result);
+	Refresh();
+}
+
+void UGatherAndHuntPlannerWidget::SavePuzzleFile()
+{
+	const FString File = GetLoadedPuzzleFile();
+	if (Session == nullptr || !Session->IsPuzzleLoaded() || File.IsEmpty())
+	{
+		ShowMessage(TEXT("Nothing to save: no puzzle file is loaded."), true);
+		return;
+	}
+	if (Planner != nullptr && Planner->HasUnsavedOpponentDraft())
+	{
+		ShowMessage(TEXT("Save or revert the opponent draft first (Enter / Revert)."), true);
+		return;
+	}
+	const bool bSaved = Session->SavePuzzleToProjectFile(File);
+	ShowMessage(bSaved ? FString::Printf(TEXT("Saved %s."), *File) : FString::Printf(TEXT("Could not save %s."), *File), !bSaved);
 	Refresh();
 }
 
@@ -675,9 +770,10 @@ void UGatherAndHuntPlannerWidget::LoadSelectedPuzzle()
 
 	if (!GameMode->LoadPuzzleFromRelativeFilename(File))
 	{
-		ValidationText->SetText(FText::FromString(FString::Printf(TEXT("Could not load %s."), *File)));
+		ShowMessage(FString::Printf(TEXT("Could not load %s."), *File), true);
 		return;
 	}
+	ShowMessage(FString::Printf(TEXT("Loaded %s."), *File), false);
 	GameMode->AutoLoadPuzzleRelativeFilename = File;
 
 	// The GameMode keeps the same session object; rebind to reset plans and visuals.
@@ -760,6 +856,16 @@ FReply UGatherAndHuntPlannerWidget::NativeOnKeyDown(const FGeometry& InGeometry,
 	if (Key == EKeys::Home)
 	{
 		OnEditButton(static_cast<int32>(EEditCommand::FrameBoard));
+		return FReply::Handled();
+	}
+	if (Key == EKeys::S && InKeyEvent.IsControlDown())
+	{
+		SavePuzzleFile();
+		return FReply::Handled();
+	}
+	if (Key == EKeys::O)
+	{
+		OnEditButton(static_cast<int32>(EEditCommand::ToggleSide));
 		return FReply::Handled();
 	}
 	if (Key == EKeys::P)

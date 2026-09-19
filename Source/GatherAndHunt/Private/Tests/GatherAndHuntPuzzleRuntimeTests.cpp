@@ -26,7 +26,7 @@ namespace
 		return Data;
 	}
 
-	FPieceSaveData MakeObjectivePiece(const int32 PieceSaveID, const FVector& Position, const PieceTypeEnum PieceType = PieceTypeEnum::BP_Objective)
+	FPieceSaveData MakeRuntimeObjectivePiece(const int32 PieceSaveID, const FVector& Position, const PieceTypeEnum PieceType = PieceTypeEnum::BP_Objective)
 	{
 		FPieceSaveData Data;
 		Data.PieceSaveID = PieceSaveID;
@@ -35,7 +35,7 @@ namespace
 		return Data;
 	}
 
-	FPieceSaveData MakeLinearHazard(const int32 PieceSaveID, const FVector& Position)
+	FPieceSaveData MakeRuntimeLinearHazard(const int32 PieceSaveID, const FVector& Position)
 	{
 		FPieceSaveData Data;
 		Data.PieceSaveID = PieceSaveID;
@@ -59,8 +59,8 @@ bool FGatherAndHuntPuzzleRuntimeLoadConvertsBoardTest::RunTest(const FString&)
 	ULevelSave* const Puzzle = MakeBasePuzzle(TEXT("RuntimeBoard"));
 	Puzzle->TargetScore = 5;
 	Puzzle->PieceSaveDataArray.Add(MakePlayerPiece(1, FVector(0.0f, 0.0f, 0.0f), FRotator::ZeroRotator));
-	Puzzle->PieceSaveDataArray.Add(MakeObjectivePiece(2, FVector(200.0f, 0.0f, 0.0f), PieceTypeEnum::BP_GoldObjective));
-	Puzzle->PieceSaveDataArray.Add(MakeLinearHazard(3, FVector(100.0f, 0.0f, 0.0f)));
+	Puzzle->PieceSaveDataArray.Add(MakeRuntimeObjectivePiece(2, FVector(200.0f, 0.0f, 0.0f), PieceTypeEnum::BP_GoldObjective));
+	Puzzle->PieceSaveDataArray.Add(MakeRuntimeLinearHazard(3, FVector(100.0f, 0.0f, 0.0f)));
 
 	UGatherAndHuntPuzzleSession* const Session = NewObject<UGatherAndHuntPuzzleSession>();
 	TestTrue(TEXT("Puzzle loads into a runtime session"), Session->LoadPuzzleFromLevelSave(Puzzle));
@@ -85,7 +85,7 @@ bool FGatherAndHuntPuzzleRuntimeHazardResolutionTest::RunTest(const FString&)
 {
 	ULevelSave* const Puzzle = MakeBasePuzzle(TEXT("HazardKill"));
 	Puzzle->PieceSaveDataArray.Add(MakePlayerPiece(1, FVector(100.0f, 0.0f, 0.0f), FRotator::ZeroRotator));
-	Puzzle->PieceSaveDataArray.Add(MakeLinearHazard(2, FVector(0.0f, 0.0f, 0.0f)));
+	Puzzle->PieceSaveDataArray.Add(MakeRuntimeLinearHazard(2, FVector(0.0f, 0.0f, 0.0f)));
 
 	UGatherAndHuntPuzzleSession* const Session = NewObject<UGatherAndHuntPuzzleSession>();
 	TestTrue(TEXT("Puzzle loads"), Session->LoadPuzzleFromLevelSave(Puzzle));
@@ -118,7 +118,7 @@ bool FGatherAndHuntPuzzleRuntimeVictoryFlowTest::RunTest(const FString&)
 	Puzzle->TargetScore = 1;
 	Puzzle->TargetTurnCount = 3;
 	Puzzle->PieceSaveDataArray.Add(MakePlayerPiece(1, FVector(0.0f, 0.0f, 0.0f), FRotator(0.0f, 180.0f, 0.0f)));
-	Puzzle->PieceSaveDataArray.Add(MakeObjectivePiece(2, FVector(0.0f, 0.0f, 0.0f)));
+	Puzzle->PieceSaveDataArray.Add(MakeRuntimeObjectivePiece(2, FVector(0.0f, 0.0f, 0.0f)));
 
 	UGatherAndHuntPuzzleSession* const Session = NewObject<UGatherAndHuntPuzzleSession>();
 	TestTrue(TEXT("Puzzle loads"), Session->LoadPuzzleFromLevelSave(Puzzle));

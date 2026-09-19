@@ -308,11 +308,15 @@ void AGatherAndHuntPuzzleBoardView::RedrawPreview()
 		return;
 	}
 
+	// Cyan/blue for the side being edited; magenta for the other side, which is
+	// the scripted opponent normally and the player's queued plan when authoring.
+	const bool bEditingOpponent = Planner->IsEditingOpponent();
+	const int32 EditedOwner = bEditingOpponent ? 1 - Planner->PlayerId : Planner->PlayerId;
 	for (const FGatherAndHuntPlannerTurtleTrack& Track : Planner->GetPreviewTracks())
 	{
-		if (Track.OwnerId != Planner->PlayerId)
+		if (Track.OwnerId != EditedOwner)
 		{
-			if (bShowOpponentPreview && Planner->GetPreviewIncludesOpponent())
+			if (bEditingOpponent || (bShowOpponentPreview && Planner->GetPreviewIncludesOpponent()))
 			{
 				DrawTrack(OpponentPathMesh, Track);
 			}

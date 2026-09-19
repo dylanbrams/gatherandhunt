@@ -2,8 +2,11 @@
 
 #include "Misc/AutomationTest.h"
 
+#include "GatherAndHuntLevelEditorLibrary.h"
 #include "GatherAndHuntPuzzleSession.h"
 #include "GatherAndHuntTurnPlanner.h"
+#include "HAL/FileManager.h"
+#include "Misc/Paths.h"
 
 namespace
 {
@@ -177,6 +180,90 @@ bool FGatherAndHuntTurnPlannerHazardPreviewTest::RunTest(const FString&)
 	Planner->ClearAll();
 	Planner->AddMove(EGatherAndHuntPuzzleMoveKind::Forward);
 	TestEqual(TEXT("Stepping away avoids the hazard"), Planner->GetPreviewSummary().TurtlesLost, 0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FGatherAndHuntTurnPlannerOpponentAuthoringTest,
+	"GatherAndHunt.GatherAndHunt.Planner.OpponentAuthoring",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FGatherAndHuntTurnPlannerOpponentAuthoringTest::RunTest(const FString&)
+{
+	// 5x5x5 board: player turtle 1 at (0,0,0) facing East, opponent turtle 2 at
+	// (4,0,0) facing West, no scripted turns yet.
+	ULevelSave* const Puzzle = NewObject<ULevelSave>(GetTransientPackage());
+	Puzzle->LevelName = TEXT("OpponentAuthoring");
+	Puzzle->GridSize = FVector(400.0f);
+	Puzzle->GridCellSize = 100.0f;
+	Puzzle->TargetScore = 100;
+	Puzzle->PieceSaveDataArray.Add(MakePlannerPiece(1, PieceTypeEnum::BP_PlayerOwnedPiece, FVector::ZeroVector));
+	FPieceSaveData Opponent = MakePlannerPiece(2, PieceTypeEnum::BP_PlayerOwnedPiece, FVector(400.0f, 0.0f, 0.0f));
+	Opponent.PieceOwnerID = 1;
+	Opponent.Rotation = FRotator(0.0f, 180.0f, 0.0f);
+	Puzzle->PieceSaveDataArray.Add(Opponent);
+
+	UGatherAndHuntPuzzleSession* const Session = NewObject<UGatherAndHuntPuzzleSession>();
+	TestTrue(TEXT("Puzzle loads"), Session->LoadPuzzleFromLevelSave(Puzzle));
+	UGatherAndHuntTurnPlanner* const Planner = NewObject<UGatherAndHuntTurnPlanner>();
+	Planner->BindToSession(Session);
+
+	TestEqual(TEXT("Player side lists the player turtle"), Planner->GetSelectedTurtleId(), 1);
+	Planner->SetEditingOpponent(true);
+	TestEqual(TEXT("Opponent side lists the opponent turtle"), Planner->GetSelectedTurtleId(), 2);
+	TestFalse(TEXT("Cannot submit while editing the opponent"), Planner->CanSubmit());
+	TestEqual(TEXT("No scripted turn yet, so the draft is empty"), Planner->GetTurtleMoves(2).Num(), 0);
+
+	Planner->AddMove(EGatherAndHuntPuzzleMoveKind::Forward);
+	TestTrue(TEXT("Editing marks the draft unsaved"), Planner->HasUnsavedOpponentDraft());
+
+	FGatherAndHuntPuzzlePlanValidation Result;
+	TestTrue(TEXT("Draft saves as the turn-0 script"), Planner->SaveOpponentTurn(Result));
+	TestFalse(TEXT("Saved draft is clean"), Planner->HasUnsavedOpponentDraft());
+	TestTrue(TEXT("Session has a turn-0 script"), Session->HasScriptedOpponentTurn(0));
+	TestTrue(TEXT("Session has unsaved file changes"), Session->HasUnsavedChanges());
+	const FGatherAndHuntPuzzleTurnPlan Scripted = Session->GetScriptedOpponentTurn(0);
+	TestTrue(TEXT("Script holds the forward move for turtle 2"),
+		Scripted.TurtlePlans.Num() == 1 && Scripted.TurtlePlans[0].TurtleId == 2
+		&& Scripted.TurtlePlans[0].Moves == TArray<EGatherAndHuntPuzzleMoveKind>{EGatherAndHuntPuzzleMoveKind::Forward});
+
+	Planner->AddMove(EGatherAndHuntPuzzleMoveKind::Wait);
+	Planner->RevertOpponentDraft();
+	TestEqual(TEXT("Revert restores the saved script"), Planner->GetTurtleMoves(2).Num(), 1);
+	TestFalse(TEXT("Reverted draft is clean"), Planner->HasUnsavedOpponentDraft());
+
+	// Back on the player side the preview runs against the new script.
+	Planner->SetEditingOpponent(false);
+	Planner->AddMove(EGatherAndHuntPuzzleMoveKind::Wait);
+	for (const FGatherAndHuntPlannerTurtleTrack& Track : Planner->GetPreviewTracks())
+	{
+		if (Track.TurtleId == 2)
+		{
+			TestEqual(TEXT("Preview moves the opponent per its script"), Track.Steps.Last().GridPosition, FIntVector(3, 0, 0));
+		}
+	}
+
+	TestTrue(TEXT("Player turn submits"), Planner->Submit(Result));
+	const FGatherAndHuntPuzzleBoardSnapshot Board = Session->GetCurrentBoardSnapshot();
+	for (const FGatherAndHuntPuzzleTurtleState& Turtle : Board.Turtles)
+	{
+		if (Turtle.TurtleId == 2)
+		{
+			TestEqual(TEXT("Session resolved the scripted move"), Turtle.GridPosition, FIntVector(3, 0, 0));
+		}
+	}
+
+	Planner->SetEditingOpponent(true);
+	TestEqual(TEXT("Turn 1 has no script, so its draft starts empty"), Planner->GetTurtleMoves(2).Num(), 0);
+
+	// Round-trip the script through a board file.
+	const FString RelativeFile = TEXT("Automation/PlannerOpponentAuthoring.dat");
+	TestTrue(TEXT("Puzzle saves to disk"), Session->SavePuzzleToProjectFile(RelativeFile));
+	TestFalse(TEXT("Saving clears the unsaved flag"), Session->HasUnsavedChanges());
+	const ULevelSave* const Reloaded = UGatherAndHuntLevelEditorLibrary::LoadLevelSaveFromProjectFile(GetTransientPackage(), RelativeFile);
+	TestTrue(TEXT("Reloaded file keeps the turn-0 script"),
+		Reloaded != nullptr && Reloaded->ScriptedOpponentTurns.Num() == 1 && Reloaded->ScriptedOpponentTurns[0].TurnNumber == 0);
+	IFileManager::Get().Delete(*FPaths::ConvertRelativePathToFull(FPaths::ProjectContentDir() / TEXT("BoardSetups") / RelativeFile));
 	return true;
 }
 

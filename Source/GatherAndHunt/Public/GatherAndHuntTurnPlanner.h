@@ -134,6 +134,10 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE(FGatherAndHuntPlannerChanged);
 // Editable turn plan for the local player, with live cost, validation and a
 // resolver-backed preview (spec §16). Holds no gameplay authority: validation
 // and preview call the same TurtleSim functions the session uses on submit.
+//
+// For puzzle authoring it can also edit the opponent's turtles: the draft is
+// seeded from the puzzle's scripted turn for the current board turn, previewed
+// against the player's queued plan, and saved back with SaveOpponentTurn.
 UCLASS(BlueprintType)
 class GATHERANDHUNT_API UGatherAndHuntTurnPlanner : public UObject
 {
@@ -152,6 +156,31 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "GatherAndHunt|Planner")
 	bool HasBoard() const { return bHasBoard; }
+
+	// --- Authoring the scripted opponent ---
+	// Switches which side's turtles are listed and edited.
+	UFUNCTION(BlueprintCallable, Category = "GatherAndHunt|Planner|Authoring")
+	void SetEditingOpponent(bool bEditOpponent);
+
+	UFUNCTION(BlueprintPure, Category = "GatherAndHunt|Planner|Authoring")
+	bool IsEditingOpponent() const { return bEditingOpponent; }
+
+	// True when the opponent draft differs from the puzzle's scripted turn.
+	UFUNCTION(BlueprintPure, Category = "GatherAndHunt|Planner|Authoring")
+	bool HasUnsavedOpponentDraft() const { return bOpponentDraftDirty; }
+
+	// Stores the opponent draft as the scripted turn for the current board turn
+	// (an empty draft removes it). Fails, with the reason, if the draft is invalid.
+	UFUNCTION(BlueprintCallable, Category = "GatherAndHunt|Planner|Authoring")
+	bool SaveOpponentTurn(FGatherAndHuntPuzzlePlanValidation& OutValidation);
+
+	// Discards the opponent draft and reloads the scripted turn.
+	UFUNCTION(BlueprintCallable, Category = "GatherAndHunt|Planner|Authoring")
+	void RevertOpponentDraft();
+
+	// Board turn the planner is editing (0-based, as scripted turns are keyed).
+	UFUNCTION(BlueprintPure, Category = "GatherAndHunt|Planner")
+	int32 GetBoardTurnNumber() const { return bHasBoard ? Board.TurnNumber : 0; }
 
 	// --- Selection ---
 	UFUNCTION(BlueprintCallable, Category = "GatherAndHunt|Planner")
@@ -189,6 +218,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "GatherAndHunt|Planner")
 	void ClearSelectedTurtle();
 
+	// Clears every queue on the side being edited.
 	UFUNCTION(BlueprintCallable, Category = "GatherAndHunt|Planner")
 	void ClearAll();
 
@@ -199,8 +229,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "GatherAndHunt|Planner")
 	TArray<FGatherAndHuntPlannerTurtleSummary> GetTurtleSummaries() const { return TurtleSummaries; }
 
+	// Plan for the side being edited.
 	UFUNCTION(BlueprintPure, Category = "GatherAndHunt|Planner")
-	FGatherAndHuntPuzzleTurnPlan GetTurnPlan() const;
+	FGatherAndHuntPuzzleTurnPlan GetTurnPlan() const { return BuildPlanForOwner(GetEditedOwner()); }
 
 	UFUNCTION(BlueprintPure, Category = "GatherAndHunt|Planner")
 	int32 GetTotalCost() const { return TotalCost; }
@@ -212,7 +243,7 @@ public:
 	FGatherAndHuntPuzzlePlanValidation GetValidation() const { return Validation; }
 
 	UFUNCTION(BlueprintPure, Category = "GatherAndHunt|Planner")
-	bool CanSubmit() const { return bHasBoard && Validation.bIsValid; }
+	bool CanSubmit() const { return bHasBoard && !bEditingOpponent && Validation.bIsValid; }
 
 	// Cost of the move at MoveIndex (0-based) within one turtle's queue.
 	UFUNCTION(BlueprintPure, Category = "GatherAndHunt|Planner")
@@ -229,7 +260,8 @@ public:
 	FGatherAndHuntPlannerPreviewSummary GetPreviewSummary() const { return PreviewSummary; }
 
 	// When true the preview resolves the puzzle's scripted opponent turn too;
-	// when false it shows the "uncontested" result (spec §16.2).
+	// when false it shows the "uncontested" result (spec §16.2). While editing
+	// the opponent, the preview always runs against the player's queued plan.
 	UFUNCTION(BlueprintCallable, Category = "GatherAndHunt|Planner")
 	void SetPreviewIncludesOpponent(bool bInclude);
 
@@ -259,6 +291,11 @@ public:
 
 private:
 	void Recompute();
+	void RebuildEditableTurtles();
+	void LoadOpponentDraftFromSession();
+	void MarkEdited();
+	int32 GetEditedOwner() const { return bEditingOpponent ? 1 - PlayerId : PlayerId; }
+	FGatherAndHuntPuzzleTurnPlan BuildPlanForOwner(int32 Owner) const;
 	TArray<EGatherAndHuntPuzzleMoveKind>* FindSelectedMoves();
 
 	UPROPERTY(Transient)
@@ -267,9 +304,13 @@ private:
 	turtlesim::BoardState Board;
 	bool bHasBoard = false;
 
-	// Playable turtles owned by PlayerId, ascending id.
+	// Playable turtles on the side being edited, ascending id.
 	TArray<int32> PlayerTurtleIds;
+	// Queues for both sides, keyed by turtle id (ids are unique across sides).
 	TMap<int32, TArray<EGatherAndHuntPuzzleMoveKind>> MovesByTurtle;
+	int32 LoadedTurnNumber = INDEX_NONE;
+	bool bEditingOpponent = false;
+	bool bOpponentDraftDirty = false;
 	int32 SelectedTurtleId = INDEX_NONE;
 	int32 SelectedMoveIndex = INDEX_NONE;
 	bool bPreviewIncludesOpponent = true;

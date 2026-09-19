@@ -44,6 +44,8 @@ public:
 // Backspace delete, [ ] shift move, Esc cursor to end, Tab/1-9 pick turtle,
 // C clear turtle (Shift+C all), P toggle opponent preview, Home reframe,
 // Enter submit (or skip playback). Drag with either mouse button to orbit, wheel to zoom.
+// Authoring: O toggles editing the scripted opponent (Enter then saves its turn),
+// Ctrl+S writes the board file.
 UCLASS()
 class GATHERANDHUNT_API UGatherAndHuntPlannerWidget : public UUserWidget
 {
@@ -87,6 +89,9 @@ private:
 	void SubmitPlan();
 	void LoadSelectedPuzzle();
 	void ResetPuzzle();
+	void SavePuzzleFile();
+	void ShowMessage(const FString& Message, bool bIsError);
+	FString GetLoadedPuzzleFile() const;
 
 	UFUNCTION()
 	void HandlePlannerChanged();
@@ -119,6 +124,11 @@ private:
 	UPROPERTY(Transient) TObjectPtr<UTextBlock> ValidationText;
 	UPROPERTY(Transient) TObjectPtr<UCheckBox> OpponentPreviewCheck;
 	UPROPERTY(Transient) TObjectPtr<UGatherAndHuntPlannerButton> SubmitButton;
+	UPROPERTY(Transient) TObjectPtr<UTextBlock> SubmitLabel;
+	UPROPERTY(Transient) TObjectPtr<UGatherAndHuntPlannerButton> RevertButton;
+	UPROPERTY(Transient) TObjectPtr<UGatherAndHuntPlannerButton> SideButton;
+	UPROPERTY(Transient) TObjectPtr<UTextBlock> SideLabel;
+	UPROPERTY(Transient) TObjectPtr<UTextBlock> MessageText;
 
 	bool bOrbiting = false;
 };
