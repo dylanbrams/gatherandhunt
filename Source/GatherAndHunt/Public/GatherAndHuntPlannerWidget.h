@@ -7,6 +7,7 @@
 #include "GatherAndHuntPlannerWidget.generated.h"
 
 class AGatherAndHuntPuzzleBoardView;
+class UBorder;
 class UCheckBox;
 class UComboBoxString;
 class UGatherAndHuntPuzzleSession;
@@ -42,9 +43,9 @@ public:
 //
 // Keys: W/Up forward, A/Left & D/Right yaw, R/F pitch up/down, S wait,
 // Backspace delete, [ ] shift move, Esc cursor to end, Tab/1-9 pick turtle,
-// C clear turtle (Shift+C all), P toggle opponent preview, Home reframe,
+// C clear turtle (Shift+C all), P toggle scripted preview, Home reframe,
 // Enter submit (or skip playback). Drag with either mouse button to orbit, wheel to zoom.
-// Authoring: O toggles editing the scripted opponent (Enter then saves its turn),
+// Authoring: O toggles editing the script (allies + opponents; Enter saves the turn),
 // Ctrl+S writes the board file.
 UCLASS()
 class GATHERANDHUNT_API UGatherAndHuntPlannerWidget : public UUserWidget
@@ -100,7 +101,7 @@ private:
 	void HandlePlaybackFinished();
 
 	UFUNCTION()
-	void HandleOpponentPreviewToggled(bool bIsChecked);
+	void HandleScriptedPreviewToggled(bool bIsChecked);
 
 	UPROPERTY(Transient)
 	TObjectPtr<UGatherAndHuntPuzzleSession> Session;
@@ -122,7 +123,7 @@ private:
 	UPROPERTY(Transient) TObjectPtr<UTextBlock> BudgetText;
 	UPROPERTY(Transient) TObjectPtr<UTextBlock> PreviewText;
 	UPROPERTY(Transient) TObjectPtr<UTextBlock> ValidationText;
-	UPROPERTY(Transient) TObjectPtr<UCheckBox> OpponentPreviewCheck;
+	UPROPERTY(Transient) TObjectPtr<UCheckBox> ScriptedPreviewCheck;
 	UPROPERTY(Transient) TObjectPtr<UGatherAndHuntPlannerButton> SubmitButton;
 	UPROPERTY(Transient) TObjectPtr<UTextBlock> SubmitLabel;
 	UPROPERTY(Transient) TObjectPtr<UGatherAndHuntPlannerButton> RevertButton;
@@ -130,5 +131,17 @@ private:
 	UPROPERTY(Transient) TObjectPtr<UTextBlock> SideLabel;
 	UPROPERTY(Transient) TObjectPtr<UTextBlock> MessageText;
 
+	// Move chips in the queue strip, in move order (rebuilt on every refresh).
+	UPROPERTY(Transient) TArray<TObjectPtr<UBorder>> QueueChips;
+
+	int32 FindChipAt(const FVector2D& ScreenPosition) const;
+	int32 FindDropIndex(const FVector2D& ScreenPosition) const;
+
 	bool bOrbiting = false;
+
+	// Chip press / drag-to-reorder state. PressedChipIndex follows the dragged
+	// move as it is reordered.
+	int32 PressedChipIndex = INDEX_NONE;
+	FVector2D PressScreenPosition = FVector2D::ZeroVector;
+	bool bDraggingChip = false;
 };

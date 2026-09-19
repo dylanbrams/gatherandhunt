@@ -14,6 +14,16 @@ enum class EGatherAndHuntPuzzleMoveKind : uint8
 	Wait
 };
 
+// Who a turtle belongs to and who drives it. Team (sim Owner) decides scoring;
+// control decides whether the player plans it or a puzzle script does.
+UENUM(BlueprintType)
+enum class EGatherAndHuntTurtleRole : uint8
+{
+	Player,   // Player's team, planned by the player.
+	Ally,     // Player's team, moved by the puzzle script; scores for the player.
+	Opponent  // Opponent team, moved by the puzzle script.
+};
+
 UENUM(BlueprintType)
 enum class EGatherAndHuntPuzzleOutcome : uint8
 {
@@ -87,6 +97,9 @@ struct GATHERANDHUNT_API FGatherAndHuntPuzzleTurtleState
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	int32 OwnerId = INDEX_NONE;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	EGatherAndHuntTurtleRole Role = EGatherAndHuntTurtleRole::Player;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	FIntVector GridPosition = FIntVector::ZeroValue;

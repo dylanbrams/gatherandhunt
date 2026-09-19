@@ -107,7 +107,8 @@ private:
 	// Reads the current-format manual trailer; false (and nothing changed) if the
 	// bytes don't match it, e.g. boards saved by the original prototype. With
 	// bRequireEndOfArchive the trailer must also end exactly at end of file.
-	bool LoadCurrentTrailer(FArchive& Ar, bool bRequireEndOfArchive);
+	// bOutVersioned reports whether the trailer carried a version header.
+	bool LoadCurrentTrailer(FArchive& Ar, bool bRequireEndOfArchive, bool& bOutVersioned);
 
 	// True only while LoadSerializedObjectFromFile deserializes a board file.
 	bool bLoadingBoardFile = false;

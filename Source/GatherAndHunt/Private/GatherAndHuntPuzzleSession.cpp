@@ -94,6 +94,14 @@ bool UGatherAndHuntPuzzleSession::LoadPuzzleFromLevelSave(ULevelSave* LevelSave)
 	}
 
 	LoadedLevelSave = DuplicateObject<ULevelSave>(LevelSave, this);
+	ScriptedAllyIds.Reset();
+	for (const FPieceSaveData& PieceData : LevelSave->PieceSaveDataArray)
+	{
+		if (IsPlayerPiece(PieceData.PieceType) && UGatherAndHuntLevelEditorLibrary::GetTurtleRole(PieceData) == EGatherAndHuntTurtleRole::Ally)
+		{
+			ScriptedAllyIds.Add(PieceData.PieceSaveID);
+		}
+	}
 	InitialBoardState = ConvertedBoardState;
 	CurrentBoardState = ConvertedBoardState;
 	LastPlaybackStartBoardState = turtlesim::BoardState{};
@@ -138,7 +146,18 @@ bool UGatherAndHuntPuzzleSession::SubmitSoloTurnPlan(
 		return false;
 	}
 
-	const turtlesim::TurnPlan PlayerPlan = ConvertTurnPlan(TurnPlan);
+	for (const FGatherAndHuntPuzzleTurtlePlan& TurtlePlan : TurnPlan.TurtlePlans)
+	{
+		if (ScriptedAllyIds.Contains(TurtlePlan.TurtleId))
+		{
+			OutValidation.bIsValid = false;
+			OutValidation.ErrorMessage = TEXT("Ally turtles are moved by the puzzle script.");
+			OutValidation.OffendingTurtleId = TurtlePlan.TurtleId;
+			return false;
+		}
+	}
+
+	turtlesim::TurnPlan PlayerPlan = ConvertTurnPlan(TurnPlan);
 	const turtlesim::PlanValidation Validation = turtlesim::ValidateTurnPlan(
 		CurrentBoardState,
 		PlayerPlan,
@@ -149,7 +168,11 @@ bool UGatherAndHuntPuzzleSession::SubmitSoloTurnPlan(
 		return false;
 	}
 
-	const turtlesim::TurnPlan OpponentPlan = BuildOpponentPlanForCurrentTurn();
+	// Allies move with the player's team; the budget above covers only the player.
+	turtlesim::TurnPlan AllyPlan;
+	turtlesim::TurnPlan OpponentPlan;
+	BuildScriptedPlansForCurrentTurn(AllyPlan, OpponentPlan);
+	PlayerPlan.PerTurtle.insert(PlayerPlan.PerTurtle.end(), AllyPlan.PerTurtle.begin(), AllyPlan.PerTurtle.end());
 
 	LastPlaybackStartBoardState = CurrentBoardState;
 	bHasLastPlaybackStartBoardState = true;
@@ -161,28 +184,53 @@ bool UGatherAndHuntPuzzleSession::SubmitSoloTurnPlan(
 	return true;
 }
 
-turtlesim::TurnPlan UGatherAndHuntPuzzleSession::BuildOpponentPlanForCurrentTurn() const
+void UGatherAndHuntPuzzleSession::BuildScriptedPlansForCurrentTurn(turtlesim::TurnPlan& OutAllyPlan, turtlesim::TurnPlan& OutOpponentPlan) const
 {
-	turtlesim::TurnPlan OpponentPlan;
-	OpponentPlan.Player = 1;
+	OutAllyPlan = turtlesim::TurnPlan{};
+	OutAllyPlan.Player = 0;
+	OutOpponentPlan = turtlesim::TurnPlan{};
+	OutOpponentPlan.Player = 1;
 	if (!bHasCurrentBoardState)
 	{
-		return OpponentPlan;
+		return;
 	}
 
-	if (const FScriptedOpponentTurnData* ScriptedTurn = FindScriptedOpponentTurn(LoadedLevelSave, CurrentBoardState.TurnNumber))
+	const turtlesim::TurnPlan Scripted = ConvertTurnPlan(GetScriptedTurn(CurrentBoardState.TurnNumber));
+	for (const turtlesim::TurtlePlan& TurtlePlan : Scripted.PerTurtle)
 	{
-		OpponentPlan = ConvertScriptedOpponentTurn(*ScriptedTurn);
+		const turtlesim::Turtle* const Turtle = CurrentBoardState.FindTurtle(TurtlePlan.Turtle);
+		if (Turtle == nullptr)
+		{
+			continue;
+		}
+		// Player-controlled turtles in a script are ignored; the player moves those.
+		if (Turtle->Owner != 0)
+		{
+			OutOpponentPlan.PerTurtle.push_back(TurtlePlan);
+		}
+		else if (ScriptedAllyIds.Contains(TurtlePlan.Turtle))
+		{
+			OutAllyPlan.PerTurtle.push_back(TurtlePlan);
+		}
 	}
-	return OpponentPlan;
 }
 
-bool UGatherAndHuntPuzzleSession::HasScriptedOpponentTurn(const int32 TurnNumber) const
+EGatherAndHuntTurtleRole UGatherAndHuntPuzzleSession::GetTurtleRole(const int32 TurtleId) const
+{
+	const turtlesim::Turtle* const Turtle = bHasCurrentBoardState ? CurrentBoardState.FindTurtle(TurtleId) : nullptr;
+	if (Turtle != nullptr && Turtle->Owner != 0)
+	{
+		return EGatherAndHuntTurtleRole::Opponent;
+	}
+	return ScriptedAllyIds.Contains(TurtleId) ? EGatherAndHuntTurtleRole::Ally : EGatherAndHuntTurtleRole::Player;
+}
+
+bool UGatherAndHuntPuzzleSession::HasScriptedTurn(const int32 TurnNumber) const
 {
 	return FindScriptedOpponentTurn(LoadedLevelSave, TurnNumber) != nullptr;
 }
 
-FGatherAndHuntPuzzleTurnPlan UGatherAndHuntPuzzleSession::GetScriptedOpponentTurn(const int32 TurnNumber) const
+FGatherAndHuntPuzzleTurnPlan UGatherAndHuntPuzzleSession::GetScriptedTurn(const int32 TurnNumber) const
 {
 	FGatherAndHuntPuzzleTurnPlan Plan;
 	if (const FScriptedOpponentTurnData* const TurnData = FindScriptedOpponentTurn(LoadedLevelSave, TurnNumber))
@@ -197,7 +245,7 @@ FGatherAndHuntPuzzleTurnPlan UGatherAndHuntPuzzleSession::GetScriptedOpponentTur
 	return Plan;
 }
 
-bool UGatherAndHuntPuzzleSession::SetScriptedOpponentTurn(const int32 TurnNumber, const FGatherAndHuntPuzzleTurnPlan& TurnPlan)
+bool UGatherAndHuntPuzzleSession::SetScriptedTurn(const int32 TurnNumber, const FGatherAndHuntPuzzleTurnPlan& TurnPlan)
 {
 	if (LoadedLevelSave == nullptr || TurnNumber < 0)
 	{
@@ -399,28 +447,6 @@ turtlesim::TurnPlan UGatherAndHuntPuzzleSession::ConvertTurnPlan(const FGatherAn
 	return ConvertedPlan;
 }
 
-turtlesim::TurnPlan UGatherAndHuntPuzzleSession::ConvertScriptedOpponentTurn(const FScriptedOpponentTurnData& TurnData)
-{
-	turtlesim::TurnPlan ConvertedPlan;
-	ConvertedPlan.Player = 1;
-	ConvertedPlan.PerTurtle.reserve(TurnData.TurtlePlans.Num());
-
-	for (const FScriptedPuzzleTurtlePlanData& TurtlePlanData : TurnData.TurtlePlans)
-	{
-		turtlesim::TurtlePlan TurtlePlan;
-		TurtlePlan.Turtle = TurtlePlanData.TurtleId;
-		TurtlePlan.Moves.reserve(TurtlePlanData.Moves.Num());
-
-		for (const EGatherAndHuntPuzzleMoveKind MoveKind : TurtlePlanData.Moves)
-		{
-			TurtlePlan.Moves.push_back(turtlesim::Move{ConvertMoveKind(MoveKind)});
-		}
-
-		ConvertedPlan.PerTurtle.push_back(std::move(TurtlePlan));
-	}
-
-	return ConvertedPlan;
-}
 
 const FScriptedOpponentTurnData* UGatherAndHuntPuzzleSession::FindScriptedOpponentTurn(const ULevelSave* LevelSave, const int32 TurnNumber)
 {
@@ -464,7 +490,7 @@ EGatherAndHuntPuzzleEventType UGatherAndHuntPuzzleSession::ToPuzzleEventType(tur
 	}
 }
 
-FGatherAndHuntPuzzleBoardSnapshot UGatherAndHuntPuzzleSession::BuildBoardSnapshot(const turtlesim::BoardState& BoardState)
+FGatherAndHuntPuzzleBoardSnapshot UGatherAndHuntPuzzleSession::BuildBoardSnapshot(const turtlesim::BoardState& BoardState) const
 {
 	FGatherAndHuntPuzzleBoardSnapshot Snapshot;
 	Snapshot.GridSize = ToFIntVector(BoardState.Size);
@@ -477,6 +503,7 @@ FGatherAndHuntPuzzleBoardSnapshot UGatherAndHuntPuzzleSession::BuildBoardSnapsho
 		FGatherAndHuntPuzzleTurtleState TurtleState;
 		TurtleState.TurtleId = Turtle.Id;
 		TurtleState.OwnerId = Turtle.Owner;
+		TurtleState.Role = GetTurtleRole(Turtle.Id);
 		TurtleState.GridPosition = ToFIntVector(Turtle.Position);
 		TurtleState.Heading = static_cast<int32>(Turtle.Facing.Heading);
 		TurtleState.Pitch = static_cast<int32>(Turtle.Facing.Pitch);
@@ -510,7 +537,7 @@ FGatherAndHuntPuzzleBoardSnapshot UGatherAndHuntPuzzleSession::BuildBoardSnapsho
 	return Snapshot;
 }
 
-FGatherAndHuntPuzzleTurnResultView UGatherAndHuntPuzzleSession::BuildTurnResultView(const turtlesim::TurnResult& TurnResult)
+FGatherAndHuntPuzzleTurnResultView UGatherAndHuntPuzzleSession::BuildTurnResultView(const turtlesim::TurnResult& TurnResult) const
 {
 	FGatherAndHuntPuzzleTurnResultView View;
 	View.FinalBoard = BuildBoardSnapshot(TurnResult.FinalState);

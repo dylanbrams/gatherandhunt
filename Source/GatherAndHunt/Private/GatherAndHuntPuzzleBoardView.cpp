@@ -23,8 +23,6 @@ namespace
 	// Camera exposure, matched to the fallback lights' intensity.
 	constexpr float ExposureEV100 = 2.0f;
 
-	const FLinearColor PlayerTurtleColor(0.15f, 0.75f, 0.3f);
-	const FLinearColor OpponentTurtleColor(0.8f, 0.1f, 0.6f);
 	const FLinearColor StaticObstacleColor(0.35f, 0.35f, 0.38f);
 	const FLinearColor HazardColor(1.0f, 0.45f, 0.0f);
 	const FLinearColor HunterColor(0.9f, 0.05f, 0.05f);
@@ -83,7 +81,8 @@ AGatherAndHuntPuzzleBoardView::AGatherAndHuntPuzzleBoardView()
 
 	BoundsMesh = CreateOverlayMesh(TEXT("BoundsMesh"), CubeMesh);
 	SelectedPathMesh = CreateOverlayMesh(TEXT("SelectedPathMesh"), CubeMesh);
-	OtherPathMesh = CreateOverlayMesh(TEXT("OtherPathMesh"), CubeMesh);
+	PlayerPathMesh = CreateOverlayMesh(TEXT("PlayerPathMesh"), CubeMesh);
+	AllyPathMesh = CreateOverlayMesh(TEXT("AllyPathMesh"), CubeMesh);
 	OpponentPathMesh = CreateOverlayMesh(TEXT("OpponentPathMesh"), CubeMesh);
 	DangerMarkerMesh = CreateOverlayMesh(TEXT("DangerMarkerMesh"), SphereMesh);
 	DeliverMarkerMesh = CreateOverlayMesh(TEXT("DeliverMarkerMesh"), SphereMesh);
@@ -131,8 +130,9 @@ void AGatherAndHuntPuzzleBoardView::Bind(UGatherAndHuntPuzzleSession* InSession,
 
 	TintOverlay(BoundsMesh, FLinearColor(0.25f, 0.25f, 0.3f));
 	TintOverlay(SelectedPathMesh, FLinearColor(0.0f, 0.8f, 1.0f));
-	TintOverlay(OtherPathMesh, FLinearColor(0.2f, 0.35f, 1.0f));
-	TintOverlay(OpponentPathMesh, OpponentTurtleColor);
+	TintOverlay(PlayerPathMesh, GetRoleColor(EGatherAndHuntTurtleRole::Player));
+	TintOverlay(AllyPathMesh, GetRoleColor(EGatherAndHuntTurtleRole::Ally));
+	TintOverlay(OpponentPathMesh, GetRoleColor(EGatherAndHuntTurtleRole::Opponent));
 	TintOverlay(DangerMarkerMesh, FLinearColor(1.0f, 0.0f, 0.0f));
 	TintOverlay(DeliverMarkerMesh, FLinearColor(0.1f, 1.0f, 0.2f));
 	TintOverlay(ClaimMarkerMesh, ObjectiveColor);
@@ -218,7 +218,7 @@ void AGatherAndHuntPuzzleBoardView::RebuildBoard()
 		// Cones point along +Z; pitch -90 turns the tip to the actor's forward (+X).
 		AGatherAndHuntPuzzlePieceActor* const Piece = SpawnPiece(
 			ConeMesh,
-			Turtle.OwnerId == 0 ? PlayerTurtleColor : OpponentTurtleColor,
+			GetRoleColor(Turtle.Role),
 			FRotator(-90.0f, 0.0f, 0.0f),
 			PieceScale * 0.6f,
 			FString::Printf(TEXT("T%d"), Turtle.TurtleId));
@@ -297,7 +297,8 @@ void AGatherAndHuntPuzzleBoardView::DrawBounds()
 void AGatherAndHuntPuzzleBoardView::RedrawPreview()
 {
 	SelectedPathMesh->ClearInstances();
-	OtherPathMesh->ClearInstances();
+	PlayerPathMesh->ClearInstances();
+	AllyPathMesh->ClearInstances();
 	OpponentPathMesh->ClearInstances();
 	DangerMarkerMesh->ClearInstances();
 	DeliverMarkerMesh->ClearInstances();
@@ -308,21 +309,32 @@ void AGatherAndHuntPuzzleBoardView::RedrawPreview()
 		return;
 	}
 
-	// Cyan/blue for the side being edited; magenta for the other side, which is
-	// the scripted opponent normally and the player's queued plan when authoring.
-	const bool bEditingOpponent = Planner->IsEditingOpponent();
-	const int32 EditedOwner = bEditingOpponent ? 1 - Planner->PlayerId : Planner->PlayerId;
+	// Selected turtle in cyan; everything else in its role colour. Scripted
+	// paths show while authoring the script or when the preview includes it.
+	const bool bShowScripted = Planner->IsEditingScript() || (bShowScriptedPreview && Planner->GetPreviewIncludesScripted());
 	for (const FGatherAndHuntPlannerTurtleTrack& Track : Planner->GetPreviewTracks())
 	{
-		if (Track.OwnerId != EditedOwner)
+		if (Track.TurtleId == Planner->GetSelectedTurtleId())
 		{
-			if (bEditingOpponent || (bShowOpponentPreview && Planner->GetPreviewIncludesOpponent()))
-			{
-				DrawTrack(OpponentPathMesh, Track);
-			}
+			DrawTrack(SelectedPathMesh, Track);
 			continue;
 		}
-		DrawTrack(Track.TurtleId == Planner->GetSelectedTurtleId() ? SelectedPathMesh.Get() : OtherPathMesh.Get(), Track);
+		switch (Track.Role)
+		{
+		case EGatherAndHuntTurtleRole::Player: DrawTrack(PlayerPathMesh, Track); break;
+		case EGatherAndHuntTurtleRole::Ally: if (bShowScripted) { DrawTrack(AllyPathMesh, Track); } break;
+		case EGatherAndHuntTurtleRole::Opponent: if (bShowScripted) { DrawTrack(OpponentPathMesh, Track); } break;
+		}
+	}
+}
+
+FLinearColor AGatherAndHuntPuzzleBoardView::GetRoleColor(const EGatherAndHuntTurtleRole TurtleRole)
+{
+	switch (TurtleRole)
+	{
+	case EGatherAndHuntTurtleRole::Ally: return FLinearColor(0.15f, 0.45f, 1.0f);
+	case EGatherAndHuntTurtleRole::Opponent: return FLinearColor(0.85f, 0.1f, 0.6f);
+	default: return FLinearColor(0.15f, 0.8f, 0.3f);
 	}
 }
 

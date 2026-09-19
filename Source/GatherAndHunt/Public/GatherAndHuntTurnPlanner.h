@@ -60,6 +60,9 @@ struct GATHERANDHUNT_API FGatherAndHuntPlannerTurtleTrack
 	int32 OwnerId = INDEX_NONE;
 
 	UPROPERTY(BlueprintReadOnly, Category = "GatherAndHunt|Planner")
+	EGatherAndHuntTurtleRole Role = EGatherAndHuntTurtleRole::Player;
+
+	UPROPERTY(BlueprintReadOnly, Category = "GatherAndHunt|Planner")
 	TArray<FGatherAndHuntPlannerTrackStep> Steps;
 };
 
@@ -71,6 +74,9 @@ struct GATHERANDHUNT_API FGatherAndHuntPlannerTurtleSummary
 
 	UPROPERTY(BlueprintReadOnly, Category = "GatherAndHunt|Planner")
 	int32 TurtleId = INDEX_NONE;
+
+	UPROPERTY(BlueprintReadOnly, Category = "GatherAndHunt|Planner")
+	EGatherAndHuntTurtleRole Role = EGatherAndHuntTurtleRole::Player;
 
 	UPROPERTY(BlueprintReadOnly, Category = "GatherAndHunt|Planner")
 	FIntVector GridPosition = FIntVector::ZeroValue;
@@ -135,9 +141,10 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE(FGatherAndHuntPlannerChanged);
 // resolver-backed preview (spec §16). Holds no gameplay authority: validation
 // and preview call the same TurtleSim functions the session uses on submit.
 //
-// For puzzle authoring it can also edit the opponent's turtles: the draft is
-// seeded from the puzzle's scripted turn for the current board turn, previewed
-// against the player's queued plan, and saved back with SaveOpponentTurn.
+// For puzzle authoring it can also edit the script-controlled turtles (allies
+// and opponents): the draft is seeded from the puzzle's scripted turn for the
+// current board turn, previewed against the player's queued plan, and saved
+// back with SaveScriptedTurn.
 UCLASS(BlueprintType)
 class GATHERANDHUNT_API UGatherAndHuntTurnPlanner : public UObject
 {
@@ -157,26 +164,28 @@ public:
 	UFUNCTION(BlueprintPure, Category = "GatherAndHunt|Planner")
 	bool HasBoard() const { return bHasBoard; }
 
-	// --- Authoring the scripted opponent ---
-	// Switches which side's turtles are listed and edited.
+	// --- Authoring scripted turns ---
+	// Script mode lists and edits the ally and opponent turtles instead of the
+	// player-controlled ones.
 	UFUNCTION(BlueprintCallable, Category = "GatherAndHunt|Planner|Authoring")
-	void SetEditingOpponent(bool bEditOpponent);
+	void SetEditingScript(bool bEditScript);
 
 	UFUNCTION(BlueprintPure, Category = "GatherAndHunt|Planner|Authoring")
-	bool IsEditingOpponent() const { return bEditingOpponent; }
+	bool IsEditingScript() const { return bEditingScript; }
 
-	// True when the opponent draft differs from the puzzle's scripted turn.
+	// True when the script draft differs from the puzzle's scripted turn.
 	UFUNCTION(BlueprintPure, Category = "GatherAndHunt|Planner|Authoring")
-	bool HasUnsavedOpponentDraft() const { return bOpponentDraftDirty; }
+	bool HasUnsavedScriptDraft() const { return bScriptDraftDirty; }
 
-	// Stores the opponent draft as the scripted turn for the current board turn
-	// (an empty draft removes it). Fails, with the reason, if the draft is invalid.
+	// Stores the draft as the scripted turn for the current board turn (an
+	// empty draft removes it). Allies and opponents are each validated against
+	// their own team's budget; fails with the reason if either is invalid.
 	UFUNCTION(BlueprintCallable, Category = "GatherAndHunt|Planner|Authoring")
-	bool SaveOpponentTurn(FGatherAndHuntPuzzlePlanValidation& OutValidation);
+	bool SaveScriptedTurn(FGatherAndHuntPuzzlePlanValidation& OutValidation);
 
-	// Discards the opponent draft and reloads the scripted turn.
+	// Discards the draft and reloads the scripted turn.
 	UFUNCTION(BlueprintCallable, Category = "GatherAndHunt|Planner|Authoring")
-	void RevertOpponentDraft();
+	void RevertScriptDraft();
 
 	// Board turn the planner is editing (0-based, as scripted turns are keyed).
 	UFUNCTION(BlueprintPure, Category = "GatherAndHunt|Planner")
@@ -215,6 +224,11 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "GatherAndHunt|Planner")
 	void ShiftSelectedMove(int32 Direction);
 
+	// Moves the selected turtle's move at FromIndex so it ends up at ToIndex
+	// (drag-to-reorder). The moved move becomes selected.
+	UFUNCTION(BlueprintCallable, Category = "GatherAndHunt|Planner")
+	void MoveMove(int32 FromIndex, int32 ToIndex);
+
 	UFUNCTION(BlueprintCallable, Category = "GatherAndHunt|Planner")
 	void ClearSelectedTurtle();
 
@@ -229,9 +243,12 @@ public:
 	UFUNCTION(BlueprintPure, Category = "GatherAndHunt|Planner")
 	TArray<FGatherAndHuntPlannerTurtleSummary> GetTurtleSummaries() const { return TurtleSummaries; }
 
-	// Plan for the side being edited.
+	// Plan for the turtles being edited (player-controlled, or scripted in script mode).
 	UFUNCTION(BlueprintPure, Category = "GatherAndHunt|Planner")
-	FGatherAndHuntPuzzleTurnPlan GetTurnPlan() const { return BuildPlanForOwner(GetEditedOwner()); }
+	FGatherAndHuntPuzzleTurnPlan GetTurnPlan() const;
+
+	UFUNCTION(BlueprintPure, Category = "GatherAndHunt|Planner")
+	EGatherAndHuntTurtleRole GetTurtleRole(int32 TurtleId) const;
 
 	UFUNCTION(BlueprintPure, Category = "GatherAndHunt|Planner")
 	int32 GetTotalCost() const { return TotalCost; }
@@ -243,7 +260,7 @@ public:
 	FGatherAndHuntPuzzlePlanValidation GetValidation() const { return Validation; }
 
 	UFUNCTION(BlueprintPure, Category = "GatherAndHunt|Planner")
-	bool CanSubmit() const { return bHasBoard && !bEditingOpponent && Validation.bIsValid; }
+	bool CanSubmit() const { return bHasBoard && !bEditingScript && Validation.bIsValid; }
 
 	// Cost of the move at MoveIndex (0-based) within one turtle's queue.
 	UFUNCTION(BlueprintPure, Category = "GatherAndHunt|Planner")
@@ -259,14 +276,14 @@ public:
 	UFUNCTION(BlueprintPure, Category = "GatherAndHunt|Planner")
 	FGatherAndHuntPlannerPreviewSummary GetPreviewSummary() const { return PreviewSummary; }
 
-	// When true the preview resolves the puzzle's scripted opponent turn too;
-	// when false it shows the "uncontested" result (spec §16.2). While editing
-	// the opponent, the preview always runs against the player's queued plan.
+	// When true the preview resolves the puzzle's scripted turn (allies and
+	// opponents) too; when false it shows the "uncontested" result (spec §16.2).
+	// In script mode the preview always runs the draft against the player's plan.
 	UFUNCTION(BlueprintCallable, Category = "GatherAndHunt|Planner")
-	void SetPreviewIncludesOpponent(bool bInclude);
+	void SetPreviewIncludesScripted(bool bInclude);
 
 	UFUNCTION(BlueprintPure, Category = "GatherAndHunt|Planner")
-	bool GetPreviewIncludesOpponent() const { return bPreviewIncludesOpponent; }
+	bool GetPreviewIncludesScripted() const { return bPreviewIncludesScripted; }
 
 	// Submits through the puzzle GameMode when present (so GameState stays in
 	// sync), otherwise straight to the session. Clears the plan on success.
@@ -292,10 +309,10 @@ public:
 private:
 	void Recompute();
 	void RebuildEditableTurtles();
-	void LoadOpponentDraftFromSession();
+	void LoadScriptDraftFromSession();
 	void MarkEdited();
-	int32 GetEditedOwner() const { return bEditingOpponent ? 1 - PlayerId : PlayerId; }
-	FGatherAndHuntPuzzleTurnPlan BuildPlanForOwner(int32 Owner) const;
+	bool IsEditable(const turtlesim::Turtle& Turtle) const;
+	FGatherAndHuntPuzzleTurnPlan BuildPlanForRoles(bool bPlayer, bool bAlly, bool bOpponent) const;
 	TArray<EGatherAndHuntPuzzleMoveKind>* FindSelectedMoves();
 
 	UPROPERTY(Transient)
@@ -304,16 +321,17 @@ private:
 	turtlesim::BoardState Board;
 	bool bHasBoard = false;
 
-	// Playable turtles on the side being edited, ascending id.
+	// Playable turtles being edited, ascending id.
 	TArray<int32> PlayerTurtleIds;
-	// Queues for both sides, keyed by turtle id (ids are unique across sides).
+	// Queues for every turtle, keyed by turtle id (ids are unique across teams):
+	// the player's plan and the scripted draft live side by side.
 	TMap<int32, TArray<EGatherAndHuntPuzzleMoveKind>> MovesByTurtle;
 	int32 LoadedTurnNumber = INDEX_NONE;
-	bool bEditingOpponent = false;
-	bool bOpponentDraftDirty = false;
+	bool bEditingScript = false;
+	bool bScriptDraftDirty = false;
 	int32 SelectedTurtleId = INDEX_NONE;
 	int32 SelectedMoveIndex = INDEX_NONE;
-	bool bPreviewIncludesOpponent = true;
+	bool bPreviewIncludesScripted = true;
 
 	int32 TotalCost = 0;
 	FGatherAndHuntPuzzlePlanValidation Validation;

@@ -48,6 +48,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "GatherAndHunt|LevelEditor")
 	static ULevelSave* LoadLevelSaveFromProjectFile(UObject* Outer, const FString& RelativeFilename);
 
+	// Role of a turtle piece, from its owner and control flag.
+	UFUNCTION(BlueprintPure, Category = "GatherAndHunt|LevelEditor")
+	static EGatherAndHuntTurtleRole GetTurtleRole(const FPieceSaveData& PieceData);
+
+	// Sets PieceOwnerID and bScriptControlled to match Role.
+	UFUNCTION(BlueprintCallable, Category = "GatherAndHunt|LevelEditor")
+	static void SetTurtleRole(UPARAM(ref) FPieceSaveData& PieceData, EGatherAndHuntTurtleRole Role);
+
 	UFUNCTION(BlueprintPure, Category = "GatherAndHunt|LevelEditor")
 	static TArray<FVector> BuildHazardPreviewPath(const FPieceSaveData& PieceData, int32 SampleCount);
 };

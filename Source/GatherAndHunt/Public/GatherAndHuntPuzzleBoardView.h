@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "GatherAndHuntPuzzleRuntimeTypes.h"
 #include "GatherAndHuntPuzzleBoardView.generated.h"
 
 class AGatherAndHuntPuzzlePieceActor;
@@ -58,8 +59,14 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "GatherAndHunt|BoardView")
 	FGatherAndHuntBoardViewEvent OnPlaybackFinished;
 
+	// Draw scripted turtles' (allies and opponents) previewed paths when the
+	// planner includes them.
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GatherAndHunt|BoardView")
-	bool bShowOpponentPreview = true;
+	bool bShowScriptedPreview = true;
+
+	// Shared role palette for pieces, paths and the planner UI.
+	UFUNCTION(BlueprintPure, Category = "GatherAndHunt|BoardView")
+	static FLinearColor GetRoleColor(EGatherAndHuntTurtleRole TurtleRole);
 
 	// Adds a key and fill light when the level has no directional light, so the
 	// board is readable in an empty map.
@@ -105,7 +112,10 @@ private:
 	TObjectPtr<UInstancedStaticMeshComponent> SelectedPathMesh;
 
 	UPROPERTY(VisibleAnywhere, Category = "GatherAndHunt|BoardView")
-	TObjectPtr<UInstancedStaticMeshComponent> OtherPathMesh;
+	TObjectPtr<UInstancedStaticMeshComponent> PlayerPathMesh;
+
+	UPROPERTY(VisibleAnywhere, Category = "GatherAndHunt|BoardView")
+	TObjectPtr<UInstancedStaticMeshComponent> AllyPathMesh;
 
 	UPROPERTY(VisibleAnywhere, Category = "GatherAndHunt|BoardView")
 	TObjectPtr<UInstancedStaticMeshComponent> OpponentPathMesh;

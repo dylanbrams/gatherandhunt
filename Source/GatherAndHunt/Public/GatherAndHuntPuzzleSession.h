@@ -67,18 +67,23 @@ public:
 	UFUNCTION(BlueprintPure, Category = "GatherAndHunt|Puzzle")
 	FGatherAndHuntPuzzleTurnResultView GetLastTurnResultView() const;
 
-	// --- Scripted opponent authoring ---
-	// Turn numbers are the 0-based board turn the plan is resolved on.
+	// Player, Ally or Opponent. Unknown ids report Player.
+	UFUNCTION(BlueprintPure, Category = "GatherAndHunt|Puzzle")
+	EGatherAndHuntTurtleRole GetTurtleRole(int32 TurtleId) const;
+
+	// --- Scripted turn authoring ---
+	// A scripted turn holds the moves of every script-controlled turtle (allies
+	// and opponents) for one board turn. Turn numbers are 0-based board turns.
 	UFUNCTION(BlueprintPure, Category = "GatherAndHunt|Puzzle|Authoring")
-	bool HasScriptedOpponentTurn(int32 TurnNumber) const;
+	bool HasScriptedTurn(int32 TurnNumber) const;
 
 	UFUNCTION(BlueprintPure, Category = "GatherAndHunt|Puzzle|Authoring")
-	FGatherAndHuntPuzzleTurnPlan GetScriptedOpponentTurn(int32 TurnNumber) const;
+	FGatherAndHuntPuzzleTurnPlan GetScriptedTurn(int32 TurnNumber) const;
 
 	// Replaces the scripted plan for TurnNumber; an empty plan removes it. Only
 	// the loaded copy changes until SavePuzzleToProjectFile.
 	UFUNCTION(BlueprintCallable, Category = "GatherAndHunt|Puzzle|Authoring")
-	bool SetScriptedOpponentTurn(int32 TurnNumber, const FGatherAndHuntPuzzleTurnPlan& TurnPlan);
+	bool SetScriptedTurn(int32 TurnNumber, const FGatherAndHuntPuzzleTurnPlan& TurnPlan);
 
 	// Writes the loaded puzzle (including scripted turns) under Content/BoardSetups.
 	UFUNCTION(BlueprintCallable, Category = "GatherAndHunt|Puzzle|Authoring")
@@ -91,8 +96,9 @@ public:
 	// C++ access for tools that run the resolver locally (e.g. the turn planner's preview).
 	const turtlesim::BoardState* GetCurrentBoardState() const { return bHasCurrentBoardState ? &CurrentBoardState : nullptr; }
 
-	// The scripted opponent plan that will be resolved against the player's next submission.
-	turtlesim::TurnPlan BuildOpponentPlanForCurrentTurn() const;
+	// This turn's scripted moves, split by team: allies join the player's plan,
+	// opponents form the other plan.
+	void BuildScriptedPlansForCurrentTurn(turtlesim::TurnPlan& OutAllyPlan, turtlesim::TurnPlan& OutOpponentPlan) const;
 
 	static turtlesim::TurnPlan ConvertTurnPlan(const FGatherAndHuntPuzzleTurnPlan& TurnPlan);
 	static FGatherAndHuntPuzzlePlanValidation BuildValidation(const turtlesim::PlanValidation& Validation);
@@ -100,11 +106,10 @@ public:
 
 private:
 	static bool ConvertLevelSaveToBoardState(const ULevelSave* LevelSave, turtlesim::BoardState& OutBoardState);
-	static turtlesim::TurnPlan ConvertScriptedOpponentTurn(const FScriptedOpponentTurnData& TurnData);
 	static const FScriptedOpponentTurnData* FindScriptedOpponentTurn(const ULevelSave* LevelSave, int32 TurnNumber);
 	static EGatherAndHuntPuzzleEventType ToPuzzleEventType(turtlesim::EEventType EventType);
-	static FGatherAndHuntPuzzleBoardSnapshot BuildBoardSnapshot(const turtlesim::BoardState& BoardState);
-	static FGatherAndHuntPuzzleTurnResultView BuildTurnResultView(const turtlesim::TurnResult& TurnResult);
+	FGatherAndHuntPuzzleBoardSnapshot BuildBoardSnapshot(const turtlesim::BoardState& BoardState) const;
+	FGatherAndHuntPuzzleTurnResultView BuildTurnResultView(const turtlesim::TurnResult& TurnResult) const;
 	static turtlesim::Orientation ConvertWorldRotationToOrientation(const FRotator& Rotation);
 	static turtlesim::IntVec3 ConvertWorldPositionToGridPosition(const FVector& Position, float GridCellSize);
 	static int32 ConvertHazardStepDistanceToCells(float HazardStepDistance, float GridCellSize);
@@ -123,4 +128,7 @@ private:
 	bool bHasLastTurnResult = false;
 	EGatherAndHuntPuzzleOutcome Outcome = EGatherAndHuntPuzzleOutcome::NotLoaded;
 	bool bHasUnsavedChanges = false;
+
+	// Player-team turtles moved by the script rather than the player.
+	TSet<int32> ScriptedAllyIds;
 };

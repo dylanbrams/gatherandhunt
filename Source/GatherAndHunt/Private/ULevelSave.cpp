@@ -5,6 +5,10 @@
 
 namespace
 {
+	// Marks a versioned manual trailer ("GAHS"). Version 2 added bScriptControlled.
+	constexpr int32 TrailerMagic = 0x53484147;
+	constexpr int32 CurrentTrailerVersion = 2;
+
 	// A count or string length read from a legacy or malformed file can be
 	// garbage; SetNum on it is fatal and a huge FString read logs a critical
 	// error. Check against the bytes left (every element needs at least one).
@@ -189,6 +193,10 @@ void ULevelSave::Serialize(FArchive& Ar)
 	// Explicitly serialize an array property
 	if (Ar.IsSaving())
 	{
+		int32 Magic = TrailerMagic;
+		int32 Version = CurrentTrailerVersion;
+		Ar << Magic;
+		Ar << Version;
 		Ar << LevelName;
 		Ar << LevelID;
 		Ar << AvailableActionsID;
@@ -218,7 +226,8 @@ void ULevelSave::Serialize(FArchive& Ar)
 			Ar << Data.HazardPrimaryStepCount;
 			Ar << Data.HazardSecondaryStepCount;
 			Ar << Data.HazardPhaseOffset;
-			// Serialize other properties as needed
+			Ar << Data.bScriptControlled;
+			// Add new fields at the end, behind a CurrentTrailerVersion bump.
 		}
 	}
 	else if (Ar.IsLoading())
@@ -229,20 +238,53 @@ void ULevelSave::Serialize(FArchive& Ar)
 		// Otherwise (legacy boards) keep the tagged values and skip the rest.
 		// Other archives (e.g. DuplicateObject) always carry the current layout
 		// and may hold more data after this object, so never skip ahead there.
-		if (!LoadCurrentTrailer(Ar, bLoadingBoardFile) && bLoadingBoardFile)
+		bool bVersioned = false;
+		if (!LoadCurrentTrailer(Ar, bLoadingBoardFile, bVersioned) && bLoadingBoardFile)
 		{
-			UE_LOG(LogTemp, Log, TEXT("ULevelSave: '%s' is a legacy board file; using its tagged properties."), *LevelName);
 			Ar.ClearError();
 			Ar.Seek(Ar.TotalSize());
-			// Legacy boards stored GridSize as the highest cell index; it is now in world units.
-			GridSize *= GridCellSize;
+			if (bVersioned)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("ULevelSave: '%s' has an unreadable trailer; using its tagged properties."), *LevelName);
+			}
+			else
+			{
+				UE_LOG(LogTemp, Log, TEXT("ULevelSave: '%s' is a legacy board file; using its tagged properties."), *LevelName);
+				// Legacy boards stored GridSize as the highest cell index; it is now in world units.
+				GridSize *= GridCellSize;
+			}
 		}
 		SavedPieces.Empty();
 	}
 }
 
-bool ULevelSave::LoadCurrentTrailer(FArchive& Ar, const bool bRequireEndOfArchive)
+bool ULevelSave::LoadCurrentTrailer(FArchive& Ar, const bool bRequireEndOfArchive, bool& bOutVersioned)
 {
+	// Version 1 had no header; later versions start with TrailerMagic + version.
+	int32 Version = 1;
+	bOutVersioned = false;
+	{
+		const int64 Start = Ar.Tell();
+		int32 Magic = 0;
+		if (IsPlausibleCount(Ar, sizeof(int32)))
+		{
+			Ar << Magic;
+		}
+		if (Magic == TrailerMagic)
+		{
+			bOutVersioned = true;
+			Ar << Version;
+			if (Ar.IsError() || Version < 2 || Version > CurrentTrailerVersion)
+			{
+				return false;
+			}
+		}
+		else
+		{
+			Ar.Seek(Start);
+		}
+	}
+
 	FString InLevelName;
 	int32 InLevelID = 0;
 	int32 InAvailableActionsID = 0;
@@ -300,6 +342,10 @@ bool ULevelSave::LoadCurrentTrailer(FArchive& Ar, const bool bRequireEndOfArchiv
 		Ar << Data.HazardPrimaryStepCount;
 		Ar << Data.HazardSecondaryStepCount;
 		Ar << Data.HazardPhaseOffset;
+		if (Version >= 2)
+		{
+			Ar << Data.bScriptControlled;
+		}
 	}
 	if (Ar.IsError() || (bRequireEndOfArchive && Ar.Tell() != Ar.TotalSize()))
 	{

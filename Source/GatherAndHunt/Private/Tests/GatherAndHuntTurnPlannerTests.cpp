@@ -87,6 +87,18 @@ bool FGatherAndHuntTurnPlannerEditingTest::RunTest(const FString&)
 	TestEqual(TEXT("Delete removes the selected move"), Planner->GetTurtleMoves(1).Num(), 7);
 	TestEqual(TEXT("Deleted move was the forward"), Planner->GetTurtleMoves(1)[0], EGatherAndHuntPuzzleMoveKind::Wait);
 
+	// Drag-to-reorder: move #1 to the end and back.
+	Planner->SelectMove(INDEX_NONE);
+	Planner->AddMove(EGatherAndHuntPuzzleMoveKind::YawLeft); // Now 8 moves, YawLeft last.
+	Planner->MoveMove(7, 0);
+	TestEqual(TEXT("MoveMove brings the last move to the front"), Planner->GetTurtleMoves(1)[0], EGatherAndHuntPuzzleMoveKind::YawLeft);
+	TestEqual(TEXT("Moved move becomes selected"), Planner->GetSelectedMoveIndex(), 0);
+	Planner->MoveMove(0, 5);
+	TestEqual(TEXT("MoveMove drops mid-queue"), Planner->GetTurtleMoves(1)[5], EGatherAndHuntPuzzleMoveKind::YawLeft);
+	TestEqual(TEXT("Reorder keeps the move count"), Planner->GetTurtleMoves(1).Num(), 8);
+	Planner->MoveMove(0, 99);
+	TestEqual(TEXT("Out-of-range target is ignored"), Planner->GetTurtleMoves(1)[5], EGatherAndHuntPuzzleMoveKind::YawLeft);
+
 	Planner->ClearAll();
 	TestEqual(TEXT("Clear all empties the plan"), Planner->GetTotalCost(), 0);
 	return true;
@@ -183,88 +195,183 @@ bool FGatherAndHuntTurnPlannerHazardPreviewTest::RunTest(const FString&)
 	return true;
 }
 
+namespace
+{
+	// 5x5x5 board with one turtle per role:
+	//   T1 player   at (0,0,0) facing East
+	//   T2 opponent at (4,0,0) facing West
+	//   T3 ally     at (0,4,0) facing East (player team, script-controlled)
+	ULevelSave* MakeRolesPuzzle()
+	{
+		ULevelSave* const Puzzle = NewObject<ULevelSave>(GetTransientPackage());
+		Puzzle->LevelName = TEXT("Roles");
+		Puzzle->GridSize = FVector(400.0f);
+		Puzzle->GridCellSize = 100.0f;
+		Puzzle->TargetScore = 100;
+		Puzzle->PieceSaveDataArray.Add(MakePlannerPiece(1, PieceTypeEnum::BP_PlayerOwnedPiece, FVector::ZeroVector));
+
+		FPieceSaveData Opponent = MakePlannerPiece(2, PieceTypeEnum::BP_PlayerOwnedPiece, FVector(400.0f, 0.0f, 0.0f));
+		UGatherAndHuntLevelEditorLibrary::SetTurtleRole(Opponent, EGatherAndHuntTurtleRole::Opponent);
+		Opponent.Rotation = FRotator(0.0f, 180.0f, 0.0f);
+		Puzzle->PieceSaveDataArray.Add(Opponent);
+
+		FPieceSaveData Ally = MakePlannerPiece(3, PieceTypeEnum::BP_PlayerOwnedPiece, FVector(0.0f, 400.0f, 0.0f));
+		UGatherAndHuntLevelEditorLibrary::SetTurtleRole(Ally, EGatherAndHuntTurtleRole::Ally);
+		Puzzle->PieceSaveDataArray.Add(Ally);
+		return Puzzle;
+	}
+
+	FIntVector FindTurtlePosition(const FGatherAndHuntPuzzleBoardSnapshot& Board, const int32 TurtleId)
+	{
+		for (const FGatherAndHuntPuzzleTurtleState& Turtle : Board.Turtles)
+		{
+			if (Turtle.TurtleId == TurtleId)
+			{
+				return Turtle.GridPosition;
+			}
+		}
+		return FIntVector(-1);
+	}
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
-	FGatherAndHuntTurnPlannerOpponentAuthoringTest,
-	"GatherAndHunt.GatherAndHunt.Planner.OpponentAuthoring",
+	FGatherAndHuntTurnPlannerRolesTest,
+	"GatherAndHunt.GatherAndHunt.Planner.Roles",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
-bool FGatherAndHuntTurnPlannerOpponentAuthoringTest::RunTest(const FString&)
+bool FGatherAndHuntTurnPlannerRolesTest::RunTest(const FString&)
 {
-	// 5x5x5 board: player turtle 1 at (0,0,0) facing East, opponent turtle 2 at
-	// (4,0,0) facing West, no scripted turns yet.
-	ULevelSave* const Puzzle = NewObject<ULevelSave>(GetTransientPackage());
-	Puzzle->LevelName = TEXT("OpponentAuthoring");
-	Puzzle->GridSize = FVector(400.0f);
-	Puzzle->GridCellSize = 100.0f;
-	Puzzle->TargetScore = 100;
-	Puzzle->PieceSaveDataArray.Add(MakePlannerPiece(1, PieceTypeEnum::BP_PlayerOwnedPiece, FVector::ZeroVector));
-	FPieceSaveData Opponent = MakePlannerPiece(2, PieceTypeEnum::BP_PlayerOwnedPiece, FVector(400.0f, 0.0f, 0.0f));
-	Opponent.PieceOwnerID = 1;
-	Opponent.Rotation = FRotator(0.0f, 180.0f, 0.0f);
-	Puzzle->PieceSaveDataArray.Add(Opponent);
+	ULevelSave* const Puzzle = MakeRolesPuzzle();
+	TestEqual(TEXT("Editor role: player"), UGatherAndHuntLevelEditorLibrary::GetTurtleRole(Puzzle->PieceSaveDataArray[0]), EGatherAndHuntTurtleRole::Player);
+	TestEqual(TEXT("Editor role: opponent"), UGatherAndHuntLevelEditorLibrary::GetTurtleRole(Puzzle->PieceSaveDataArray[1]), EGatherAndHuntTurtleRole::Opponent);
+	TestEqual(TEXT("Editor role: ally"), UGatherAndHuntLevelEditorLibrary::GetTurtleRole(Puzzle->PieceSaveDataArray[2]), EGatherAndHuntTurtleRole::Ally);
+	TestEqual(TEXT("Ally stays on the player team"), Puzzle->PieceSaveDataArray[2].PieceOwnerID, 0);
 
 	UGatherAndHuntPuzzleSession* const Session = NewObject<UGatherAndHuntPuzzleSession>();
 	TestTrue(TEXT("Puzzle loads"), Session->LoadPuzzleFromLevelSave(Puzzle));
+	TestEqual(TEXT("Session role: player"), Session->GetTurtleRole(1), EGatherAndHuntTurtleRole::Player);
+	TestEqual(TEXT("Session role: opponent"), Session->GetTurtleRole(2), EGatherAndHuntTurtleRole::Opponent);
+	TestEqual(TEXT("Session role: ally"), Session->GetTurtleRole(3), EGatherAndHuntTurtleRole::Ally);
+	for (const FGatherAndHuntPuzzleTurtleState& Turtle : Session->GetCurrentBoardSnapshot().Turtles)
+	{
+		TestEqual(*FString::Printf(TEXT("Snapshot carries the role of T%d"), Turtle.TurtleId), Turtle.Role, Session->GetTurtleRole(Turtle.TurtleId));
+	}
+
+	UGatherAndHuntTurnPlanner* const Planner = NewObject<UGatherAndHuntTurnPlanner>();
+	Planner->BindToSession(Session);
+	TestEqual(TEXT("Player mode lists only the player turtle"), Planner->GetTurtleSummaries().Num(), 1);
+	Planner->SelectTurtle(3);
+	TestEqual(TEXT("Ally cannot be selected in player mode"), Planner->GetSelectedTurtleId(), 1);
+
+	Planner->SetEditingScript(true);
+	const TArray<FGatherAndHuntPlannerTurtleSummary> Scripted = Planner->GetTurtleSummaries();
+	TestTrue(TEXT("Script mode lists opponent and ally"),
+		Scripted.Num() == 2 && Scripted[0].Role == EGatherAndHuntTurtleRole::Opponent && Scripted[1].Role == EGatherAndHuntTurtleRole::Ally);
+
+	// Each scripted team has its own budget: 12 moves each (cost 20) is fine.
+	for (const int32 TurtleId : {2, 3})
+	{
+		Planner->SelectTurtle(TurtleId);
+		for (int32 Index = 0; Index < 12; ++Index)
+		{
+			Planner->AddMove(EGatherAndHuntPuzzleMoveKind::Wait);
+		}
+	}
+	TestTrue(TEXT("Full budget on both scripted teams is valid"), Planner->GetValidation().bIsValid);
+	Planner->AddMove(EGatherAndHuntPuzzleMoveKind::Wait);
+	TestFalse(TEXT("Over budget on the ally team is invalid"), Planner->GetValidation().bIsValid);
+	TestEqual(TEXT("Budget shown is the ally team"), Planner->GetTotalCost(), 23);
+	Planner->SelectTurtle(2);
+	TestEqual(TEXT("Selecting the opponent shows its own budget"), Planner->GetTotalCost(), 20);
+	Planner->SelectTurtle(3);
+	Planner->RemoveSelectedMove();
+	TestTrue(TEXT("Trimming the ally back under budget is valid"), Planner->GetValidation().bIsValid);
+
+	// The player cannot plan an ally directly.
+	FGatherAndHuntPuzzleTurnPlan AllyPlan;
+	FGatherAndHuntPuzzleTurtlePlan& TurtlePlan = AllyPlan.TurtlePlans.AddDefaulted_GetRef();
+	TurtlePlan.TurtleId = 3;
+	TurtlePlan.Moves.Add(EGatherAndHuntPuzzleMoveKind::Forward);
+	FGatherAndHuntPuzzlePlanValidation Result;
+	TestFalse(TEXT("Submitting an ally move is rejected"), Session->SubmitSoloTurnPlan(AllyPlan, Result));
+	TestEqual(TEXT("Rejection names the ally"), Result.OffendingTurtleId, 3);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FGatherAndHuntTurnPlannerScriptAuthoringTest,
+	"GatherAndHunt.GatherAndHunt.Planner.ScriptAuthoring",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FGatherAndHuntTurnPlannerScriptAuthoringTest::RunTest(const FString&)
+{
+	UGatherAndHuntPuzzleSession* const Session = NewObject<UGatherAndHuntPuzzleSession>();
+	TestTrue(TEXT("Puzzle loads"), Session->LoadPuzzleFromLevelSave(MakeRolesPuzzle()));
 	UGatherAndHuntTurnPlanner* const Planner = NewObject<UGatherAndHuntTurnPlanner>();
 	Planner->BindToSession(Session);
 
-	TestEqual(TEXT("Player side lists the player turtle"), Planner->GetSelectedTurtleId(), 1);
-	Planner->SetEditingOpponent(true);
-	TestEqual(TEXT("Opponent side lists the opponent turtle"), Planner->GetSelectedTurtleId(), 2);
-	TestFalse(TEXT("Cannot submit while editing the opponent"), Planner->CanSubmit());
+	Planner->SetEditingScript(true);
+	TestFalse(TEXT("Cannot submit while editing the script"), Planner->CanSubmit());
 	TestEqual(TEXT("No scripted turn yet, so the draft is empty"), Planner->GetTurtleMoves(2).Num(), 0);
 
+	Planner->SelectTurtle(2);
 	Planner->AddMove(EGatherAndHuntPuzzleMoveKind::Forward);
-	TestTrue(TEXT("Editing marks the draft unsaved"), Planner->HasUnsavedOpponentDraft());
+	Planner->SelectTurtle(3);
+	Planner->AddMove(EGatherAndHuntPuzzleMoveKind::Forward);
+	TestTrue(TEXT("Editing marks the draft unsaved"), Planner->HasUnsavedScriptDraft());
 
 	FGatherAndHuntPuzzlePlanValidation Result;
-	TestTrue(TEXT("Draft saves as the turn-0 script"), Planner->SaveOpponentTurn(Result));
-	TestFalse(TEXT("Saved draft is clean"), Planner->HasUnsavedOpponentDraft());
-	TestTrue(TEXT("Session has a turn-0 script"), Session->HasScriptedOpponentTurn(0));
+	TestTrue(TEXT("Draft saves as the turn-0 script"), Planner->SaveScriptedTurn(Result));
+	TestFalse(TEXT("Saved draft is clean"), Planner->HasUnsavedScriptDraft());
+	TestTrue(TEXT("Session has a turn-0 script"), Session->HasScriptedTurn(0));
 	TestTrue(TEXT("Session has unsaved file changes"), Session->HasUnsavedChanges());
-	const FGatherAndHuntPuzzleTurnPlan Scripted = Session->GetScriptedOpponentTurn(0);
-	TestTrue(TEXT("Script holds the forward move for turtle 2"),
-		Scripted.TurtlePlans.Num() == 1 && Scripted.TurtlePlans[0].TurtleId == 2
-		&& Scripted.TurtlePlans[0].Moves == TArray<EGatherAndHuntPuzzleMoveKind>{EGatherAndHuntPuzzleMoveKind::Forward});
+	TestEqual(TEXT("Script holds the ally and the opponent"), Session->GetScriptedTurn(0).TurtlePlans.Num(), 2);
 
 	Planner->AddMove(EGatherAndHuntPuzzleMoveKind::Wait);
-	Planner->RevertOpponentDraft();
-	TestEqual(TEXT("Revert restores the saved script"), Planner->GetTurtleMoves(2).Num(), 1);
-	TestFalse(TEXT("Reverted draft is clean"), Planner->HasUnsavedOpponentDraft());
+	Planner->RevertScriptDraft();
+	TestEqual(TEXT("Revert restores the saved script"), Planner->GetTurtleMoves(3).Num(), 1);
+	TestFalse(TEXT("Reverted draft is clean"), Planner->HasUnsavedScriptDraft());
 
-	// Back on the player side the preview runs against the new script.
-	Planner->SetEditingOpponent(false);
+	// Back on the player side the preview runs the script for both teams.
+	Planner->SetEditingScript(false);
 	Planner->AddMove(EGatherAndHuntPuzzleMoveKind::Wait);
 	for (const FGatherAndHuntPlannerTurtleTrack& Track : Planner->GetPreviewTracks())
 	{
 		if (Track.TurtleId == 2)
 		{
-			TestEqual(TEXT("Preview moves the opponent per its script"), Track.Steps.Last().GridPosition, FIntVector(3, 0, 0));
+			TestEqual(TEXT("Preview moves the opponent per the script"), Track.Steps.Last().GridPosition, FIntVector(3, 0, 0));
+		}
+		if (Track.TurtleId == 3)
+		{
+			TestEqual(TEXT("Preview moves the ally per the script"), Track.Steps.Last().GridPosition, FIntVector(1, 4, 0));
+			TestEqual(TEXT("Track carries the ally role"), Track.Role, EGatherAndHuntTurtleRole::Ally);
 		}
 	}
 
 	TestTrue(TEXT("Player turn submits"), Planner->Submit(Result));
 	const FGatherAndHuntPuzzleBoardSnapshot Board = Session->GetCurrentBoardSnapshot();
-	for (const FGatherAndHuntPuzzleTurtleState& Turtle : Board.Turtles)
-	{
-		if (Turtle.TurtleId == 2)
-		{
-			TestEqual(TEXT("Session resolved the scripted move"), Turtle.GridPosition, FIntVector(3, 0, 0));
-		}
-	}
+	TestEqual(TEXT("Session resolved the scripted opponent move"), FindTurtlePosition(Board, 2), FIntVector(3, 0, 0));
+	TestEqual(TEXT("Session resolved the scripted ally move"), FindTurtlePosition(Board, 3), FIntVector(1, 4, 0));
 
-	Planner->SetEditingOpponent(true);
-	TestEqual(TEXT("Turn 1 has no script, so its draft starts empty"), Planner->GetTurtleMoves(2).Num(), 0);
+	Planner->SetEditingScript(true);
+	TestEqual(TEXT("Turn 1 has no script, so its draft starts empty"), Planner->GetTurtleMoves(3).Num(), 0);
 
-	// Round-trip the script through a board file.
-	const FString RelativeFile = TEXT("Automation/PlannerOpponentAuthoring.dat");
+	// Round-trip the script and the ally flag through a board file.
+	const FString RelativeFile = TEXT("Automation/PlannerScriptAuthoring.dat");
 	TestTrue(TEXT("Puzzle saves to disk"), Session->SavePuzzleToProjectFile(RelativeFile));
 	TestFalse(TEXT("Saving clears the unsaved flag"), Session->HasUnsavedChanges());
-	const ULevelSave* const Reloaded = UGatherAndHuntLevelEditorLibrary::LoadLevelSaveFromProjectFile(GetTransientPackage(), RelativeFile);
+	ULevelSave* const Reloaded = UGatherAndHuntLevelEditorLibrary::LoadLevelSaveFromProjectFile(GetTransientPackage(), RelativeFile);
 	TestTrue(TEXT("Reloaded file keeps the turn-0 script"),
 		Reloaded != nullptr && Reloaded->ScriptedOpponentTurns.Num() == 1 && Reloaded->ScriptedOpponentTurns[0].TurnNumber == 0);
+	if (Reloaded != nullptr)
+	{
+		UGatherAndHuntPuzzleSession* const ReloadedSession = NewObject<UGatherAndHuntPuzzleSession>();
+		TestTrue(TEXT("Reloaded puzzle loads"), ReloadedSession->LoadPuzzleFromLevelSave(Reloaded));
+		TestEqual(TEXT("Reloaded file keeps the ally role"), ReloadedSession->GetTurtleRole(3), EGatherAndHuntTurtleRole::Ally);
+	}
 	IFileManager::Get().Delete(*FPaths::ConvertRelativePathToFull(FPaths::ProjectContentDir() / TEXT("BoardSetups") / RelativeFile));
 	return true;
 }
+
 
 #endif

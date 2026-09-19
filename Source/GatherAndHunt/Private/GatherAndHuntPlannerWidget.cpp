@@ -36,7 +36,7 @@ namespace
 		SkipPlayback,
 		FrameBoard,
 		ToggleSide,
-		RevertOpponent
+		RevertScript
 	};
 
 	enum class EFileCommand : int32
@@ -52,6 +52,20 @@ namespace
 	const FLinearColor ErrorColor(1.0f, 0.3f, 0.25f);
 	const FLinearColor GoodColor(0.35f, 1.0f, 0.45f);
 	const FLinearColor SelectedColor(0.0f, 0.55f, 0.75f);
+	const FLinearColor DragColor(0.85f, 0.85f, 0.9f);
+
+	// Pixels the pointer must travel before a press on a chip becomes a drag.
+	constexpr float DragThreshold = 6.0f;
+
+	const TCHAR* RoleLabel(const EGatherAndHuntTurtleRole Role)
+	{
+		switch (Role)
+		{
+		case EGatherAndHuntTurtleRole::Ally: return TEXT("ALLY");
+		case EGatherAndHuntTurtleRole::Opponent: return TEXT("OPPONENT");
+		default: return TEXT("PLAYER");
+		}
+	}
 	const FLinearColor TierColors[4] = {
 		FLinearColor(0.2f, 0.2f, 0.22f),  // unused (tier 0)
 		FLinearColor(0.2f, 0.2f, 0.22f),  // tier 1
@@ -311,10 +325,10 @@ void UGatherAndHuntPlannerWidget::BuildTree()
 		AddRow(Preview, PreviewText);
 
 		UHorizontalBox* const ToggleRow = WidgetTree->ConstructWidget<UHorizontalBox>();
-		OpponentPreviewCheck = WidgetTree->ConstructWidget<UCheckBox>();
-		OpponentPreviewCheck->OnCheckStateChanged.AddDynamic(this, &UGatherAndHuntPlannerWidget::HandleOpponentPreviewToggled);
-		AddCell(ToggleRow, OpponentPreviewCheck);
-		AddCell(ToggleRow, MakeText(TEXT("Include scripted opponent (P)"), 10, DimTextColor));
+		ScriptedPreviewCheck = WidgetTree->ConstructWidget<UCheckBox>();
+		ScriptedPreviewCheck->OnCheckStateChanged.AddDynamic(this, &UGatherAndHuntPlannerWidget::HandleScriptedPreviewToggled);
+		AddCell(ToggleRow, ScriptedPreviewCheck);
+		AddCell(ToggleRow, MakeText(TEXT("Include scripted turtles (P)"), 10, DimTextColor));
 		AddRow(Preview, ToggleRow, 6.0f);
 
 		ValidationText = MakeText(TEXT(""), 11, ErrorColor);
@@ -329,7 +343,7 @@ void UGatherAndHuntPlannerWidget::BuildTree()
 		SubmitLabel = Cast<UTextBlock>(SubmitButton->GetContent());
 		AddCell(SubmitRow, SubmitButton);
 		AddCell(SubmitRow, MakeButton(TEXT("Skip anim"), static_cast<int32>(EEditCommand::SkipPlayback), &UGatherAndHuntPlannerWidget::OnEditButton));
-		RevertButton = MakeButton(TEXT("Revert"), static_cast<int32>(EEditCommand::RevertOpponent), &UGatherAndHuntPlannerWidget::OnEditButton);
+		RevertButton = MakeButton(TEXT("Revert"), static_cast<int32>(EEditCommand::RevertScript), &UGatherAndHuntPlannerWidget::OnEditButton);
 		AddCell(SubmitRow, RevertButton);
 		AddRow(Preview, SubmitRow, 8.0f);
 
@@ -337,7 +351,8 @@ void UGatherAndHuntPlannerWidget::BuildTree()
 			TEXT("W fwd   A/D yaw   R/F pitch   S wait\n")
 			TEXT("Bksp delete   [ ] shift   Esc cursor to end\n")
 			TEXT("C clear turtle   Shift+C clear all\n")
-			TEXT("O edit scripted opponent   Ctrl+S save file\n")
+			TEXT("O edit script (allies + opponents)   Ctrl+S save\n")
+			TEXT("Drag move chips to reorder   Right-click chip: delete\n")
 			TEXT("Drag: orbit   Wheel: zoom   Home: reframe"),
 			9, DimTextColor);
 		AddRow(Preview, Help, 10.0f);
@@ -434,8 +449,8 @@ void UGatherAndHuntPlannerWidget::RefreshInfo()
 	}
 	Status += FString::Printf(TEXT("    [%s]"), OutcomeLabel(Session->GetOutcome()));
 	const int32 BoardTurn = Session->GetCurrentTurnNumber();
-	Status += FString::Printf(TEXT("\nScripted opponent this turn: %s"), Session->HasScriptedOpponentTurn(BoardTurn) ? TEXT("yes") : TEXT("none"));
-	if (Planner != nullptr && Planner->HasUnsavedOpponentDraft())
+	Status += FString::Printf(TEXT("\nScripted turn: %s"), Session->HasScriptedTurn(BoardTurn) ? TEXT("yes") : TEXT("none"));
+	if (Planner != nullptr && Planner->HasUnsavedScriptDraft())
 	{
 		Status += TEXT("   (draft not saved to turn)");
 	}
@@ -484,7 +499,8 @@ void UGatherAndHuntPlannerWidget::RefreshTurtleList()
 		}
 		Label += FateLabel(Summary.PreviewFate);
 
-		UGatherAndHuntPlannerButton* const Button = MakeButton(Label, Summary.TurtleId, &UGatherAndHuntPlannerWidget::OnTurtleButton, 10);
+		UGatherAndHuntPlannerButton* const Button = MakeButton(
+			FString::Printf(TEXT("%s  %s"), RoleLabel(Summary.Role), *Label), Summary.TurtleId, &UGatherAndHuntPlannerWidget::OnTurtleButton, 10);
 		if (Summary.bHasValidationError)
 		{
 			Button->SetBackgroundColor(ErrorColor);
@@ -493,13 +509,25 @@ void UGatherAndHuntPlannerWidget::RefreshTurtleList()
 		{
 			Button->SetBackgroundColor(SelectedColor);
 		}
-		TurtleList->AddChildToVerticalBox(Button)->SetPadding(FMargin(0.0f, 2.0f));
+
+		// Role swatch in the same colour as the turtle's piece on the board.
+		UBorder* const Swatch = WidgetTree->ConstructWidget<UBorder>();
+		Swatch->SetBrushColor(AGatherAndHuntPuzzleBoardView::GetRoleColor(Summary.Role));
+		USizeBox* const SwatchSize = WidgetTree->ConstructWidget<USizeBox>();
+		SwatchSize->SetWidthOverride(8.0f);
+		SwatchSize->SetContent(Swatch);
+
+		UHorizontalBox* const Row = WidgetTree->ConstructWidget<UHorizontalBox>();
+		Row->AddChildToHorizontalBox(SwatchSize)->SetPadding(FMargin(0.0f, 0.0f, 4.0f, 0.0f));
+		Row->AddChildToHorizontalBox(Button)->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+		TurtleList->AddChildToVerticalBox(Row)->SetPadding(FMargin(0.0f, 2.0f));
 	}
 }
 
 void UGatherAndHuntPlannerWidget::RefreshQueue()
 {
 	QueueStrip->ClearChildren();
+	QueueChips.Reset();
 	if (Planner == nullptr || !Planner->HasBoard() || Planner->GetSelectedTurtleId() == INDEX_NONE)
 	{
 		QueueHeaderText->SetText(FText::FromString(TEXT("QUEUE")));
@@ -513,25 +541,33 @@ void UGatherAndHuntPlannerWidget::RefreshQueue()
 	const FGatherAndHuntPuzzlePlanValidation Validation = Planner->GetValidation();
 	const int32 SelectedMove = Planner->GetSelectedMoveIndex();
 
+	const EGatherAndHuntTurtleRole Role = Planner->GetTurtleRole(TurtleId);
 	QueueHeaderText->SetText(FText::FromString(FString::Printf(
-		TEXT("%s  T%d   %s"),
-		Planner->IsEditingOpponent() ? TEXT("OPPONENT QUEUE") : TEXT("QUEUE"),
+		TEXT("%s QUEUE  T%d   %s"),
+		RoleLabel(Role),
 		TurtleId,
-		SelectedMove == INDEX_NONE ? TEXT("(new moves append)") : *FString::Printf(TEXT("(new moves insert after #%d)"), SelectedMove + 1))));
+		bDraggingChip ? TEXT("(dragging - release to drop)")
+			: SelectedMove == INDEX_NONE ? TEXT("(new moves append)") : *FString::Printf(TEXT("(new moves insert after #%d)"), SelectedMove + 1))));
+	QueueHeaderText->SetColorAndOpacity(FSlateColor(AGatherAndHuntPuzzleBoardView::GetRoleColor(Role)));
 
+	// Chips are plain borders, not buttons, so the widget sees the raw mouse
+	// events it needs for click-to-select, drag-to-reorder and right-click delete.
 	for (int32 Index = 0; Index < Moves.Num(); ++Index)
 	{
 		const int32 Cost = UGatherAndHuntTurnPlanner::GetMoveCost(Index);
-		UGatherAndHuntPlannerButton* const Chip = MakeButton(
-			FString::Printf(TEXT("%d %s  %d"), Index + 1, MoveLabel(Moves[Index]), Cost),
-			Index,
-			&UGatherAndHuntPlannerWidget::OnQueueChip,
-			10);
+		UBorder* const Chip = WidgetTree->ConstructWidget<UBorder>();
+		Chip->SetPadding(FMargin(8.0f, 4.0f));
+		Chip->SetVisibility(ESlateVisibility::Visible);
+		Chip->SetContent(MakeText(FString::Printf(TEXT("%d %s  %d"), Index + 1, MoveLabel(Moves[Index]), Cost), 10));
 
 		const bool bOffending = !Validation.bIsValid && Validation.OffendingTurtleId == TurtleId && Validation.OffendingMoveIndex == Index;
-		Chip->SetBackgroundColor(bOffending ? ErrorColor
-			: (Index == SelectedMove ? SelectedColor : TierColors[UGatherAndHuntTurnPlanner::GetMoveCostTier(Index)]));
+		const bool bDragged = bDraggingChip && Index == PressedChipIndex;
+		Chip->SetBrushColor(bDragged ? DragColor
+			: bOffending ? ErrorColor
+			: Index == SelectedMove ? SelectedColor
+			: TierColors[UGatherAndHuntTurnPlanner::GetMoveCostTier(Index)]);
 		QueueStrip->AddChildToWrapBox(Chip);
+		QueueChips.Add(Chip);
 	}
 	if (Moves.Num() == 0)
 	{
@@ -542,7 +578,10 @@ void UGatherAndHuntPlannerWidget::RefreshQueue()
 	const int32 Budget = FMath::Max(1, Planner->GetBudget());
 	BudgetBar->SetPercent(FMath::Clamp(static_cast<float>(Total) / Budget, 0.0f, 1.0f));
 	BudgetBar->SetFillColorAndOpacity(Total > Budget ? ErrorColor : (Total * 4 >= Budget * 3 ? FLinearColor(1.0f, 0.7f, 0.1f) : GoodColor));
-	BudgetText->SetText(FText::FromString(FString::Printf(TEXT("  Budget %d / %d"), Total, Budget)));
+	// Budgets are per team; in script mode the selected turtle's team is shown.
+	const TCHAR* const Team = !Planner->IsEditingScript() ? TEXT("")
+		: Role == EGatherAndHuntTurtleRole::Opponent ? TEXT(" (opponent team)") : TEXT(" (ally team)");
+	BudgetText->SetText(FText::FromString(FString::Printf(TEXT("  Budget%s %d / %d"), Team, Total, Budget)));
 }
 
 void UGatherAndHuntPlannerWidget::RefreshPreview()
@@ -551,21 +590,22 @@ void UGatherAndHuntPlannerWidget::RefreshPreview()
 	const bool bLoaded = Session != nullptr && Session->IsPuzzleLoaded();
 	const bool bFinished = bLoaded && (Session->GetOutcome() == EGatherAndHuntPuzzleOutcome::Victory || Session->GetOutcome() == EGatherAndHuntPuzzleOutcome::Defeat);
 
-	if (OpponentPreviewCheck != nullptr && Planner != nullptr)
+	if (ScriptedPreviewCheck != nullptr && Planner != nullptr)
 	{
-		OpponentPreviewCheck->SetIsChecked(Planner->GetPreviewIncludesOpponent());
+		ScriptedPreviewCheck->SetIsChecked(Planner->GetPreviewIncludesScripted());
 	}
 
-	const bool bEditingOpponent = Planner != nullptr && Planner->IsEditingOpponent();
-	SideLabel->SetText(FText::FromString(bEditingOpponent
-		? TEXT("Editing: OPPONENT  (O: back to player)")
-		: TEXT("Editing: PLAYER  (O: script opponent)")));
-	SideButton->SetBackgroundColor(bEditingOpponent ? FLinearColor(0.8f, 0.1f, 0.6f) : FLinearColor::White);
-	SubmitLabel->SetText(FText::FromString(bEditingOpponent
-		? FString::Printf(TEXT("  SAVE OPPONENT TURN %d (Enter)  "), (Planner != nullptr ? Planner->GetBoardTurnNumber() : 0) + 1)
+	const bool bEditingScript = Planner != nullptr && Planner->IsEditingScript();
+	SideLabel->SetText(FText::FromString(bEditingScript
+		? TEXT("Editing: SCRIPT - allies + opponents  (O: back)")
+		: TEXT("Editing: PLAYER  (O: edit script)")));
+	SideButton->SetBackgroundColor(AGatherAndHuntPuzzleBoardView::GetRoleColor(
+		bEditingScript ? EGatherAndHuntTurtleRole::Opponent : EGatherAndHuntTurtleRole::Player));
+	SubmitLabel->SetText(FText::FromString(bEditingScript
+		? FString::Printf(TEXT("  SAVE SCRIPTED TURN %d (Enter)  "), (Planner != nullptr ? Planner->GetBoardTurnNumber() : 0) + 1)
 		: FString(TEXT("  SUBMIT TURN (Enter)  "))));
-	RevertButton->SetVisibility(bEditingOpponent ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
-	RevertButton->SetIsEnabled(Planner != nullptr && Planner->HasUnsavedOpponentDraft());
+	RevertButton->SetVisibility(bEditingScript ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+	RevertButton->SetIsEnabled(Planner != nullptr && Planner->HasUnsavedScriptDraft());
 
 	if (Planner == nullptr || !Planner->HasBoard())
 	{
@@ -592,7 +632,7 @@ void UGatherAndHuntPlannerWidget::RefreshPreview()
 	{
 		Message = TEXT("Playing turn... (Enter to skip)");
 	}
-	else if (bFinished && !bEditingOpponent)
+	else if (bFinished && !bEditingScript)
 	{
 		Message = FString::Printf(TEXT("%s. Press Reset to replay the puzzle."), OutcomeLabel(Session->GetOutcome()));
 	}
@@ -607,7 +647,7 @@ void UGatherAndHuntPlannerWidget::RefreshPreview()
 	}
 	ValidationText->SetText(FText::FromString(Message));
 	ValidationText->SetColorAndOpacity(FSlateColor(bFinished && Session->GetOutcome() == EGatherAndHuntPuzzleOutcome::Victory ? GoodColor : ErrorColor));
-	SubmitButton->SetIsEnabled(bEditingOpponent
+	SubmitButton->SetIsEnabled(bEditingScript
 		? Validation.bIsValid && !bPlaying
 		: Planner->CanSubmit() && !bPlaying && !bFinished);
 }
@@ -679,8 +719,8 @@ void UGatherAndHuntPlannerWidget::OnEditButton(const int32 Command)
 	case EEditCommand::Submit: SubmitPlan(); break;
 	case EEditCommand::SkipPlayback: if (BoardView != nullptr) { BoardView->SkipPlayback(); } break;
 	case EEditCommand::FrameBoard: if (BoardView != nullptr) { BoardView->FrameBoard(); } break;
-	case EEditCommand::ToggleSide: Planner->SetEditingOpponent(!Planner->IsEditingOpponent()); break;
-	case EEditCommand::RevertOpponent: Planner->RevertOpponentDraft(); ShowMessage(TEXT("Opponent draft reverted."), false); break;
+	case EEditCommand::ToggleSide: Planner->SetEditingScript(!Planner->IsEditingScript()); break;
+	case EEditCommand::RevertScript: Planner->RevertScriptDraft(); ShowMessage(TEXT("Script draft reverted."), false); break;
 	}
 }
 
@@ -719,16 +759,16 @@ void UGatherAndHuntPlannerWidget::SubmitPlan()
 		return;
 	}
 	FGatherAndHuntPuzzlePlanValidation Result;
-	if (Planner->IsEditingOpponent())
+	if (Planner->IsEditingScript())
 	{
 		const int32 Turn = Planner->GetBoardTurnNumber() + 1;
-		if (Planner->SaveOpponentTurn(Result))
+		if (Planner->SaveScriptedTurn(Result))
 		{
-			ShowMessage(FString::Printf(TEXT("Saved opponent turn %d to the puzzle. Ctrl+S writes the file."), Turn), false);
+			ShowMessage(FString::Printf(TEXT("Saved scripted turn %d to the puzzle. Ctrl+S writes the file."), Turn), false);
 		}
 		else
 		{
-			ShowMessage(FString::Printf(TEXT("Opponent turn not saved: %s"), *Result.ErrorMessage), true);
+			ShowMessage(FString::Printf(TEXT("Scripted turn not saved: %s"), *Result.ErrorMessage), true);
 		}
 		Refresh();
 		return;
@@ -748,9 +788,9 @@ void UGatherAndHuntPlannerWidget::SavePuzzleFile()
 		ShowMessage(TEXT("Nothing to save: no puzzle file is loaded."), true);
 		return;
 	}
-	if (Planner != nullptr && Planner->HasUnsavedOpponentDraft())
+	if (Planner != nullptr && Planner->HasUnsavedScriptDraft())
 	{
-		ShowMessage(TEXT("Save or revert the opponent draft first (Enter / Revert)."), true);
+		ShowMessage(TEXT("Save or revert the script draft first (Enter / Revert)."), true);
 		return;
 	}
 	const bool bSaved = Session->SavePuzzleToProjectFile(File);
@@ -821,11 +861,11 @@ void UGatherAndHuntPlannerWidget::HandlePlaybackFinished()
 	Refresh();
 }
 
-void UGatherAndHuntPlannerWidget::HandleOpponentPreviewToggled(const bool bIsChecked)
+void UGatherAndHuntPlannerWidget::HandleScriptedPreviewToggled(const bool bIsChecked)
 {
 	if (Planner != nullptr)
 	{
-		Planner->SetPreviewIncludesOpponent(bIsChecked);
+		Planner->SetPreviewIncludesScripted(bIsChecked);
 	}
 }
 
@@ -870,7 +910,7 @@ FReply UGatherAndHuntPlannerWidget::NativeOnKeyDown(const FGeometry& InGeometry,
 	}
 	if (Key == EKeys::P)
 	{
-		Planner->SetPreviewIncludesOpponent(!Planner->GetPreviewIncludesOpponent());
+		Planner->SetPreviewIncludesScripted(!Planner->GetPreviewIncludesScripted());
 		return FReply::Handled();
 	}
 	if (Key == EKeys::Tab)
@@ -946,15 +986,78 @@ FReply UGatherAndHuntPlannerWidget::NativeOnKeyDown(const FGeometry& InGeometry,
 	return FReply::Handled();
 }
 
+int32 UGatherAndHuntPlannerWidget::FindChipAt(const FVector2D& ScreenPosition) const
+{
+	for (int32 Index = 0; Index < QueueChips.Num(); ++Index)
+	{
+		if (QueueChips[Index] != nullptr && QueueChips[Index]->GetCachedGeometry().IsUnderLocation(ScreenPosition))
+		{
+			return Index;
+		}
+	}
+	return INDEX_NONE;
+}
+
+int32 UGatherAndHuntPlannerWidget::FindDropIndex(const FVector2D& ScreenPosition) const
+{
+	// Chips are rebuilt on every edit and only get geometry once laid out; until
+	// then (a frame after a reorder) report no target so the drag just waits.
+	const int32 Hovered = FindChipAt(ScreenPosition);
+	if (Hovered == INDEX_NONE || Hovered == PressedChipIndex)
+	{
+		return INDEX_NONE;
+	}
+
+	// Only cross into a neighbour once past its middle, so chips of different
+	// widths don't flip back and forth under a still pointer.
+	const FGeometry& Geometry = QueueChips[Hovered]->GetCachedGeometry();
+	const FVector2D Local = Geometry.AbsoluteToLocal(ScreenPosition);
+	const bool bPastMiddle = Local.X >= Geometry.GetLocalSize().X * 0.5f;
+	return (Hovered > PressedChipIndex) == bPastMiddle ? Hovered : INDEX_NONE;
+}
+
 FReply UGatherAndHuntPlannerWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
 {
-	// Reaches here only for clicks on empty space; buttons handle their own.
+	// Reaches here only for clicks that no button handled: queue chips and empty space.
+	const int32 Chip = Planner != nullptr ? FindChipAt(InMouseEvent.GetScreenSpacePosition()) : INDEX_NONE;
+	if (Chip != INDEX_NONE && (BoardView == nullptr || !BoardView->IsPlayingBack()))
+	{
+		if (InMouseEvent.GetEffectingButton() == EKeys::RightMouseButton)
+		{
+			Planner->RemoveMove(Chip);
+			return FReply::Handled();
+		}
+		if (InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton)
+		{
+			PressedChipIndex = Chip;
+			PressScreenPosition = InMouseEvent.GetScreenSpacePosition();
+			bDraggingChip = false;
+			return FReply::Handled().CaptureMouse(TakeWidget()).SetUserFocus(TakeWidget());
+		}
+	}
+
 	bOrbiting = true;
 	return FReply::Handled().CaptureMouse(TakeWidget()).SetUserFocus(TakeWidget());
 }
 
 FReply UGatherAndHuntPlannerWidget::NativeOnMouseButtonUp(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
 {
+	if (PressedChipIndex != INDEX_NONE)
+	{
+		const int32 Chip = PressedChipIndex;
+		const bool bWasDragging = bDraggingChip;
+		PressedChipIndex = INDEX_NONE;
+		bDraggingChip = false;
+		if (bWasDragging)
+		{
+			Refresh(); // Drop the drag highlight.
+		}
+		else
+		{
+			OnQueueChip(Chip);
+		}
+		return FReply::Handled().ReleaseMouseCapture();
+	}
 	if (bOrbiting)
 	{
 		bOrbiting = false;
@@ -965,6 +1068,28 @@ FReply UGatherAndHuntPlannerWidget::NativeOnMouseButtonUp(const FGeometry& InGeo
 
 FReply UGatherAndHuntPlannerWidget::NativeOnMouseMove(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
 {
+	if (PressedChipIndex != INDEX_NONE && Planner != nullptr)
+	{
+		const FVector2D Position = InMouseEvent.GetScreenSpacePosition();
+		if (!bDraggingChip && FVector2D::Distance(Position, PressScreenPosition) >= DragThreshold)
+		{
+			bDraggingChip = true;
+			Planner->SelectMove(PressedChipIndex);
+			Refresh();
+		}
+		if (bDraggingChip)
+		{
+			// Reorder live, so the ghost path follows the drag.
+			const int32 Target = FindDropIndex(Position);
+			if (Target != INDEX_NONE)
+			{
+				const int32 From = PressedChipIndex;
+				PressedChipIndex = Target;
+				Planner->MoveMove(From, Target);
+			}
+		}
+		return FReply::Handled();
+	}
 	if (bOrbiting && BoardView != nullptr)
 	{
 		const FVector2D Delta = InMouseEvent.GetCursorDelta();

@@ -260,6 +260,21 @@ ULevelSave* UGatherAndHuntLevelEditorLibrary::LoadLevelSaveFromProjectFile(UObje
 	return LevelSave;
 }
 
+EGatherAndHuntTurtleRole UGatherAndHuntLevelEditorLibrary::GetTurtleRole(const FPieceSaveData& PieceData)
+{
+	if (PieceData.PieceOwnerID != 0)
+	{
+		return EGatherAndHuntTurtleRole::Opponent;
+	}
+	return PieceData.bScriptControlled ? EGatherAndHuntTurtleRole::Ally : EGatherAndHuntTurtleRole::Player;
+}
+
+void UGatherAndHuntLevelEditorLibrary::SetTurtleRole(FPieceSaveData& PieceData, const EGatherAndHuntTurtleRole Role)
+{
+	PieceData.PieceOwnerID = Role == EGatherAndHuntTurtleRole::Opponent ? 1 : 0;
+	PieceData.bScriptControlled = Role != EGatherAndHuntTurtleRole::Player;
+}
+
 TArray<FVector> UGatherAndHuntLevelEditorLibrary::BuildHazardPreviewPath(
 	const FPieceSaveData& PieceData,
 	const int32 SampleCount)

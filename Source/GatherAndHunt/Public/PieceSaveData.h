@@ -35,6 +35,12 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	bool CanHaveQueue = false;
 
+	// Turtles only. With PieceOwnerID 0, true makes the turtle an ally moved by
+	// the puzzle's scripted turns instead of by the player. Opponent turtles
+	// (PieceOwnerID 1) are always scripted. See UGatherAndHuntLevelEditorLibrary::GetTurtleRole.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	bool bScriptControlled = false;
+
 	// Deterministic hazard motion authoring. Position is the origin/start point.
 	// Rotation defines the forward/right axes used by patrol and loop motion.
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)

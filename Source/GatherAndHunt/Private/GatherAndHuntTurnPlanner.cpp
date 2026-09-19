@@ -31,6 +31,18 @@ namespace
 	{
 		return Turtle.bAlive && !Turtle.bDelivered;
 	}
+
+	turtlesim::TurnPlan ToSimPlan(const FGatherAndHuntPuzzleTurnPlan& Plan, const int32 Player)
+	{
+		turtlesim::TurnPlan Converted = UGatherAndHuntPuzzleSession::ConvertTurnPlan(Plan);
+		Converted.Player = Player;
+		return Converted;
+	}
+
+	void AppendPlan(turtlesim::TurnPlan& Into, const turtlesim::TurnPlan& From)
+	{
+		Into.PerTurtle.insert(Into.PerTurtle.end(), From.PerTurtle.begin(), From.PerTurtle.end());
+	}
 }
 
 UWorld* UGatherAndHuntTurnPlanner::GetWorld() const
@@ -50,7 +62,7 @@ void UGatherAndHuntTurnPlanner::BindToSession(UGatherAndHuntPuzzleSession* InSes
 	SelectedTurtleId = INDEX_NONE;
 	SelectedMoveIndex = INDEX_NONE;
 	LoadedTurnNumber = INDEX_NONE;
-	bOpponentDraftDirty = false;
+	bScriptDraftDirty = false;
 	RefreshFromSession();
 }
 
@@ -70,16 +82,32 @@ void UGatherAndHuntTurnPlanner::RefreshFromSession()
 		}
 	}
 
-	// A new board turn has its own scripted opponent plan; drop the old draft.
+	// A new board turn has its own scripted turn; drop the old draft.
 	const int32 TurnNumber = bHasBoard ? Board.TurnNumber : INDEX_NONE;
 	if (TurnNumber != LoadedTurnNumber)
 	{
 		LoadedTurnNumber = TurnNumber;
-		LoadOpponentDraftFromSession();
+		LoadScriptDraftFromSession();
 	}
 
 	RebuildEditableTurtles();
 	Recompute();
+}
+
+EGatherAndHuntTurtleRole UGatherAndHuntTurnPlanner::GetTurtleRole(const int32 TurtleId) const
+{
+	if (Session != nullptr)
+	{
+		return Session->GetTurtleRole(TurtleId);
+	}
+	const turtlesim::Turtle* const Turtle = Board.FindTurtle(TurtleId);
+	return Turtle != nullptr && Turtle->Owner != PlayerId ? EGatherAndHuntTurtleRole::Opponent : EGatherAndHuntTurtleRole::Player;
+}
+
+bool UGatherAndHuntTurnPlanner::IsEditable(const turtlesim::Turtle& Turtle) const
+{
+	const bool bScripted = GetTurtleRole(Turtle.Id) != EGatherAndHuntTurtleRole::Player;
+	return IsPlayable(Turtle) && bScripted == bEditingScript;
 }
 
 void UGatherAndHuntTurnPlanner::RebuildEditableTurtles()
@@ -87,7 +115,7 @@ void UGatherAndHuntTurnPlanner::RebuildEditableTurtles()
 	PlayerTurtleIds.Reset();
 	for (const turtlesim::Turtle& Turtle : Board.Turtles)
 	{
-		if (Turtle.Owner == GetEditedOwner() && IsPlayable(Turtle))
+		if (IsEditable(Turtle))
 		{
 			PlayerTurtleIds.Add(Turtle.Id);
 		}
@@ -101,13 +129,11 @@ void UGatherAndHuntTurnPlanner::RebuildEditableTurtles()
 	}
 }
 
-void UGatherAndHuntTurnPlanner::LoadOpponentDraftFromSession()
+void UGatherAndHuntTurnPlanner::LoadScriptDraftFromSession()
 {
-	const int32 OpponentOwner = 1 - PlayerId;
 	for (auto It = MovesByTurtle.CreateIterator(); It; ++It)
 	{
-		const turtlesim::Turtle* const Turtle = Board.FindTurtle(It.Key());
-		if (Turtle != nullptr && Turtle->Owner == OpponentOwner)
+		if (GetTurtleRole(It.Key()) != EGatherAndHuntTurtleRole::Player)
 		{
 			It.RemoveCurrent();
 		}
@@ -115,41 +141,42 @@ void UGatherAndHuntTurnPlanner::LoadOpponentDraftFromSession()
 
 	if (bHasBoard && Session != nullptr)
 	{
-		for (const FGatherAndHuntPuzzleTurtlePlan& TurtlePlan : Session->GetScriptedOpponentTurn(Board.TurnNumber).TurtlePlans)
+		for (const FGatherAndHuntPuzzleTurtlePlan& TurtlePlan : Session->GetScriptedTurn(Board.TurnNumber).TurtlePlans)
 		{
 			const turtlesim::Turtle* const Turtle = Board.FindTurtle(TurtlePlan.TurtleId);
-			if (Turtle != nullptr && Turtle->Owner == OpponentOwner && IsPlayable(*Turtle) && TurtlePlan.Moves.Num() > 0)
+			if (Turtle != nullptr && IsPlayable(*Turtle) && TurtlePlan.Moves.Num() > 0
+				&& GetTurtleRole(TurtlePlan.TurtleId) != EGatherAndHuntTurtleRole::Player)
 			{
 				MovesByTurtle.Add(TurtlePlan.TurtleId, TurtlePlan.Moves);
 			}
 		}
 	}
-	bOpponentDraftDirty = false;
+	bScriptDraftDirty = false;
 }
 
 void UGatherAndHuntTurnPlanner::MarkEdited()
 {
-	if (bEditingOpponent)
+	if (bEditingScript)
 	{
-		bOpponentDraftDirty = true;
+		bScriptDraftDirty = true;
 	}
 	Recompute();
 }
 
-void UGatherAndHuntTurnPlanner::SetEditingOpponent(const bool bEditOpponent)
+void UGatherAndHuntTurnPlanner::SetEditingScript(const bool bEditScript)
 {
-	if (bEditingOpponent == bEditOpponent)
+	if (bEditingScript == bEditScript)
 	{
 		return;
 	}
-	bEditingOpponent = bEditOpponent;
+	bEditingScript = bEditScript;
 	SelectedTurtleId = INDEX_NONE;
 	SelectedMoveIndex = INDEX_NONE;
 	RebuildEditableTurtles();
 	Recompute();
 }
 
-bool UGatherAndHuntTurnPlanner::SaveOpponentTurn(FGatherAndHuntPuzzlePlanValidation& OutValidation)
+bool UGatherAndHuntTurnPlanner::SaveScriptedTurn(FGatherAndHuntPuzzlePlanValidation& OutValidation)
 {
 	OutValidation = FGatherAndHuntPuzzlePlanValidation{};
 	if (Session == nullptr || !bHasBoard)
@@ -159,23 +186,27 @@ bool UGatherAndHuntTurnPlanner::SaveOpponentTurn(FGatherAndHuntPuzzlePlanValidat
 		return false;
 	}
 
-	const FGatherAndHuntPuzzleTurnPlan Draft = BuildPlanForOwner(1 - PlayerId);
-	turtlesim::TurnPlan Converted = UGatherAndHuntPuzzleSession::ConvertTurnPlan(Draft);
-	Converted.Player = 1 - PlayerId;
-	OutValidation = UGatherAndHuntPuzzleSession::BuildValidation(turtlesim::ValidateTurnPlan(Board, Converted, Budget));
-	if (!OutValidation.bIsValid || !Session->SetScriptedOpponentTurn(Board.TurnNumber, Draft))
+	// Each team has its own budget, so validate the ally and opponent parts separately.
+	const turtlesim::TurnPlan AllyDraft = ToSimPlan(BuildPlanForRoles(false, true, false), PlayerId);
+	const turtlesim::TurnPlan OpponentDraft = ToSimPlan(BuildPlanForRoles(false, false, true), 1 - PlayerId);
+	OutValidation = UGatherAndHuntPuzzleSession::BuildValidation(turtlesim::ValidateTurnPlan(Board, AllyDraft, Budget));
+	if (OutValidation.bIsValid)
+	{
+		OutValidation = UGatherAndHuntPuzzleSession::BuildValidation(turtlesim::ValidateTurnPlan(Board, OpponentDraft, Budget));
+	}
+	if (!OutValidation.bIsValid || !Session->SetScriptedTurn(Board.TurnNumber, BuildPlanForRoles(false, true, true)))
 	{
 		return false;
 	}
 
-	bOpponentDraftDirty = false;
+	bScriptDraftDirty = false;
 	Recompute();
 	return true;
 }
 
-void UGatherAndHuntTurnPlanner::RevertOpponentDraft()
+void UGatherAndHuntTurnPlanner::RevertScriptDraft()
 {
-	LoadOpponentDraftFromSession();
+	LoadScriptDraftFromSession();
 	SelectedMoveIndex = INDEX_NONE;
 	Recompute();
 }
@@ -188,7 +219,8 @@ void UGatherAndHuntTurnPlanner::SelectTurtle(const int32 TurtleId)
 	}
 	SelectedTurtleId = TurtleId;
 	SelectedMoveIndex = INDEX_NONE;
-	OnPlanChanged.Broadcast();
+	// Budget and cost are per team, and the selected turtle decides the team in script mode.
+	Recompute();
 }
 
 void UGatherAndHuntTurnPlanner::SelectAdjacentTurtle(const int32 Direction)
@@ -257,18 +289,20 @@ void UGatherAndHuntTurnPlanner::RemoveSelectedMove()
 
 void UGatherAndHuntTurnPlanner::ShiftSelectedMove(const int32 Direction)
 {
+	MoveMove(SelectedMoveIndex, SelectedMoveIndex + FMath::Sign(Direction));
+}
+
+void UGatherAndHuntTurnPlanner::MoveMove(const int32 FromIndex, const int32 ToIndex)
+{
 	TArray<EGatherAndHuntPuzzleMoveKind>* const Moves = FindSelectedMoves();
-	if (Moves == nullptr || !Moves->IsValidIndex(SelectedMoveIndex))
+	if (Moves == nullptr || !Moves->IsValidIndex(FromIndex) || !Moves->IsValidIndex(ToIndex) || FromIndex == ToIndex)
 	{
 		return;
 	}
-	const int32 Target = SelectedMoveIndex + FMath::Sign(Direction);
-	if (!Moves->IsValidIndex(Target))
-	{
-		return;
-	}
-	Moves->Swap(SelectedMoveIndex, Target);
-	SelectedMoveIndex = Target;
+	const EGatherAndHuntPuzzleMoveKind Moved = (*Moves)[FromIndex];
+	Moves->RemoveAt(FromIndex);
+	Moves->Insert(Moved, ToIndex);
+	SelectedMoveIndex = ToIndex;
 	MarkEdited();
 }
 
@@ -297,13 +331,25 @@ TArray<EGatherAndHuntPuzzleMoveKind> UGatherAndHuntTurnPlanner::GetTurtleMoves(c
 	return Moves != nullptr ? *Moves : TArray<EGatherAndHuntPuzzleMoveKind>();
 }
 
-FGatherAndHuntPuzzleTurnPlan UGatherAndHuntTurnPlanner::BuildPlanForOwner(const int32 Owner) const
+FGatherAndHuntPuzzleTurnPlan UGatherAndHuntTurnPlanner::GetTurnPlan() const
+{
+	return bEditingScript ? BuildPlanForRoles(false, true, true) : BuildPlanForRoles(true, false, false);
+}
+
+FGatherAndHuntPuzzleTurnPlan UGatherAndHuntTurnPlanner::BuildPlanForRoles(const bool bPlayer, const bool bAlly, const bool bOpponent) const
 {
 	FGatherAndHuntPuzzleTurnPlan Plan;
 	for (const turtlesim::Turtle& Turtle : Board.Turtles)
 	{
 		const TArray<EGatherAndHuntPuzzleMoveKind>* const Moves = MovesByTurtle.Find(Turtle.Id);
-		if (Turtle.Owner == Owner && IsPlayable(Turtle) && Moves != nullptr && Moves->Num() > 0)
+		if (!IsPlayable(Turtle) || Moves == nullptr || Moves->Num() == 0)
+		{
+			continue;
+		}
+		const EGatherAndHuntTurtleRole Role = GetTurtleRole(Turtle.Id);
+		if ((Role == EGatherAndHuntTurtleRole::Player && bPlayer)
+			|| (Role == EGatherAndHuntTurtleRole::Ally && bAlly)
+			|| (Role == EGatherAndHuntTurtleRole::Opponent && bOpponent))
 		{
 			FGatherAndHuntPuzzleTurtlePlan& TurtlePlan = Plan.TurtlePlans.AddDefaulted_GetRef();
 			TurtlePlan.TurtleId = Turtle.Id;
@@ -324,11 +370,11 @@ int32 UGatherAndHuntTurnPlanner::GetMoveCostTier(const int32 MoveIndex)
 	return FMath::Max(1, turtlesim::CostModel::MoveCost(MoveIndex + 1));
 }
 
-void UGatherAndHuntTurnPlanner::SetPreviewIncludesOpponent(const bool bInclude)
+void UGatherAndHuntTurnPlanner::SetPreviewIncludesScripted(const bool bInclude)
 {
-	if (bPreviewIncludesOpponent != bInclude)
+	if (bPreviewIncludesScripted != bInclude)
 	{
-		bPreviewIncludesOpponent = bInclude;
+		bPreviewIncludesScripted = bInclude;
 		Recompute();
 	}
 }
@@ -346,7 +392,7 @@ bool UGatherAndHuntTurnPlanner::Submit(FGatherAndHuntPuzzlePlanValidation& OutVa
 		return false;
 	}
 
-	const FGatherAndHuntPuzzleTurnPlan Plan = BuildPlanForOwner(PlayerId);
+	const FGatherAndHuntPuzzleTurnPlan Plan = BuildPlanForRoles(true, false, false);
 	UWorld* const World = GetWorld();
 	AGatherAndHuntPuzzleGameMode* const GameMode = World != nullptr ? World->GetAuthGameMode<AGatherAndHuntPuzzleGameMode>() : nullptr;
 	const bool bAccepted = GameMode != nullptr && GameMode->GetPuzzleSession() == Session
@@ -360,12 +406,9 @@ bool UGatherAndHuntTurnPlanner::Submit(FGatherAndHuntPuzzlePlanValidation& OutVa
 		return false;
 	}
 
-	for (const turtlesim::Turtle& Turtle : Board.Turtles)
+	for (const FGatherAndHuntPuzzleTurtlePlan& TurtlePlan : Plan.TurtlePlans)
 	{
-		if (Turtle.Owner == PlayerId)
-		{
-			MovesByTurtle.Remove(Turtle.Id);
-		}
+		MovesByTurtle.Remove(TurtlePlan.TurtleId);
 	}
 	SelectedMoveIndex = INDEX_NONE;
 	RefreshFromSession();
@@ -389,32 +432,49 @@ void UGatherAndHuntTurnPlanner::Recompute()
 		return;
 	}
 
-	const int32 EditedOwner = GetEditedOwner();
-	turtlesim::TurnPlan EditedPlan = UGatherAndHuntPuzzleSession::ConvertTurnPlan(BuildPlanForOwner(EditedOwner));
-	EditedPlan.Player = EditedOwner;
-	TotalCost = turtlesim::CostModel::TurnCost(EditedPlan);
-	Validation = UGatherAndHuntPuzzleSession::BuildValidation(turtlesim::ValidateTurnPlan(Board, EditedPlan, Budget));
+	// Team plans for the preview. The player's own queue always counts. Scripted
+	// turtles use the draft while authoring, or the puzzle's script otherwise.
+	const int32 OpponentId = 1 - PlayerId;
+	const turtlesim::TurnPlan PlayerPart = ToSimPlan(BuildPlanForRoles(true, false, false), PlayerId);
+	turtlesim::TurnPlan AllyPart;
+	turtlesim::TurnPlan OpponentPart;
+	if (bEditingScript)
+	{
+		AllyPart = ToSimPlan(BuildPlanForRoles(false, true, false), PlayerId);
+		OpponentPart = ToSimPlan(BuildPlanForRoles(false, false, true), OpponentId);
+	}
+	else if (bPreviewIncludesScripted && Session != nullptr)
+	{
+		Session->BuildScriptedPlansForCurrentTurn(AllyPart, OpponentPart);
+	}
 
-	// The other side: the scripted opponent when planning a real turn, or the
-	// player's queued plan when authoring the opponent against it.
-	turtlesim::TurnPlan OtherPlan;
-	OtherPlan.Player = 1 - EditedOwner;
-	if (bEditingOpponent)
+	// Validation and cost cover what's being edited, per team budget.
+	if (bEditingScript)
 	{
-		OtherPlan = UGatherAndHuntPuzzleSession::ConvertTurnPlan(BuildPlanForOwner(PlayerId));
-		OtherPlan.Player = PlayerId;
+		const bool bOpponentSelected = GetTurtleRole(SelectedTurtleId) == EGatherAndHuntTurtleRole::Opponent;
+		TotalCost = turtlesim::CostModel::TurnCost(bOpponentSelected ? OpponentPart : AllyPart);
+		Validation = UGatherAndHuntPuzzleSession::BuildValidation(turtlesim::ValidateTurnPlan(Board, AllyPart, Budget));
+		if (Validation.bIsValid)
+		{
+			Validation = UGatherAndHuntPuzzleSession::BuildValidation(turtlesim::ValidateTurnPlan(Board, OpponentPart, Budget));
+		}
 	}
-	else if (bPreviewIncludesOpponent && Session != nullptr)
+	else
 	{
-		OtherPlan = Session->BuildOpponentPlanForCurrentTurn();
+		TotalCost = turtlesim::CostModel::TurnCost(PlayerPart);
+		Validation = UGatherAndHuntPuzzleSession::BuildValidation(turtlesim::ValidateTurnPlan(Board, PlayerPart, Budget));
 	}
+
+	turtlesim::TurnPlan TeamPlan = PlayerPart;
+	AppendPlan(TeamPlan, AllyPart);
+	OpponentPart.Player = OpponentId;
 
 	// Preview even when invalid so the ghost path keeps tracking edits; the
 	// resolver treats illegal pitch moves as no-ops, and the UI flags the error.
-	const turtlesim::TurnResult Result = turtlesim::ResolveTurn(Board, EditedPlan, OtherPlan);
+	const turtlesim::TurnResult Result = turtlesim::ResolveTurn(Board, TeamPlan, OpponentPart);
 
-	PreviewSummary.ScoreBefore = EditedOwner == 0 ? Board.ScorePlayer0 : Board.ScorePlayer1;
-	PreviewSummary.ScoreAfter = EditedOwner == 0 ? Result.FinalState.ScorePlayer0 : Result.FinalState.ScorePlayer1;
+	PreviewSummary.ScoreBefore = PlayerId == 0 ? Board.ScorePlayer0 : Board.ScorePlayer1;
+	PreviewSummary.ScoreAfter = PlayerId == 0 ? Result.FinalState.ScorePlayer0 : Result.FinalState.ScorePlayer1;
 	PreviewSummary.TickCount = static_cast<int32>(Result.Ticks.size());
 
 	for (const turtlesim::Turtle& Turtle : Board.Turtles)
@@ -427,6 +487,7 @@ void UGatherAndHuntTurnPlanner::Recompute()
 		FGatherAndHuntPlannerTurtleTrack& Track = PreviewTracks.AddDefaulted_GetRef();
 		Track.TurtleId = Turtle.Id;
 		Track.OwnerId = Turtle.Owner;
+		Track.Role = GetTurtleRole(Turtle.Id);
 		for (const turtlesim::TrackStep& Step : turtlesim::ExtractTurtleTrack(Board, Result, Turtle.Id))
 		{
 			FGatherAndHuntPlannerTrackStep& Out = Track.Steps.AddDefaulted_GetRef();
@@ -439,26 +500,32 @@ void UGatherAndHuntTurnPlanner::Recompute()
 			Out.PointsDelta = Step.PointsDelta;
 		}
 
-		if (Turtle.Owner != EditedOwner)
-		{
-			continue;
-		}
-
 		const EGatherAndHuntPlannerStepKind Fate = Track.Steps.Num() > 0 ? Track.Steps.Last().Kind : EGatherAndHuntPlannerStepKind::Start;
 		int32 ClaimedPoints = 0;
 		for (const FGatherAndHuntPlannerTrackStep& Step : Track.Steps)
 		{
-			if (Step.bClaimedObjective)
-			{
-				++PreviewSummary.ObjectivesClaimed;
-				ClaimedPoints += Step.PointsDelta;
-			}
+			ClaimedPoints += Step.bClaimedObjective ? Step.PointsDelta : 0;
 		}
-		PreviewSummary.TurtlesLost += Fate == EGatherAndHuntPlannerStepKind::Destroyed ? 1 : 0;
-		PreviewSummary.TurtlesDelivered += Fate == EGatherAndHuntPlannerStepKind::Delivered ? 1 : 0;
+
+		// The summary counts the player's whole team (player turtles and allies).
+		if (Turtle.Owner == PlayerId)
+		{
+			for (const FGatherAndHuntPlannerTrackStep& Step : Track.Steps)
+			{
+				PreviewSummary.ObjectivesClaimed += Step.bClaimedObjective ? 1 : 0;
+			}
+			PreviewSummary.TurtlesLost += Fate == EGatherAndHuntPlannerStepKind::Destroyed ? 1 : 0;
+			PreviewSummary.TurtlesDelivered += Fate == EGatherAndHuntPlannerStepKind::Delivered ? 1 : 0;
+		}
+
+		if (!IsEditable(Turtle))
+		{
+			continue;
+		}
 
 		FGatherAndHuntPlannerTurtleSummary& Summary = TurtleSummaries.AddDefaulted_GetRef();
 		Summary.TurtleId = Turtle.Id;
+		Summary.Role = Track.Role;
 		Summary.GridPosition = UGatherAndHuntPuzzleSession::ToFIntVector(Turtle.Position);
 		Summary.Heading = static_cast<int32>(Turtle.Facing.Heading);
 		Summary.Pitch = static_cast<int32>(Turtle.Facing.Pitch);
