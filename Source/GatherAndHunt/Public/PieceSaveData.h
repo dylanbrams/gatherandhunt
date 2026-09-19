@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "UObject/Object.h"
 #include "PieceTypeEnum.h"
+#include "MovementTypeEnum.h"
 #include "PieceSaveData.generated.h"
 
 /**
@@ -26,12 +27,45 @@ public:
 	FVector Scale = FVector::OneVector;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
-	PieceTypeEnum PieceType = PieceTypeEnum::BP_BasePiece; // Or use an enum, if you have a finite set of piece types
+	PieceTypeEnum PieceType = PieceTypeEnum::BP_BasePiece;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	MovementTypeEnum MovementType = MovementTypeEnum::None;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	bool CanHaveQueue = false;
+
+	// Deterministic hazard motion authoring. Position is the origin/start point.
+	// Rotation defines the forward/right axes used by patrol and loop motion.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	float HazardStepDistance = 100.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	int32 HazardPrimaryStepCount = 1;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	int32 HazardSecondaryStepCount = 1;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	int32 HazardPhaseOffset = 0;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	int PieceSaveID = 0; // Or use an enum, if you have a finite set of piece types
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	int PieceOwnerID = 0; // Or use an enum, if you have a finite set of piece types
+
+	bool IsCircularHazard() const;
+	bool IsLinearPatrolHazard() const;
+	bool IsDeterministicHazard() const;
+	void GetDeterministicHazardPath(TArray<FVector>& OutPath) const;
+	int32 GetDeterministicHazardPathLength() const;
+	FVector GetDeterministicHazardPositionAtTurn(int32 TurnIndex) const;
+
+private:
+	TArray<FVector> BuildCircularHazardPath() const;
+	TArray<FVector> BuildLinearPatrolPath() const;
+
+	
 	
 };

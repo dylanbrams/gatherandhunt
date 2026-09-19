@@ -8,8 +8,9 @@ public class GatherAndHuntEditorTarget : TargetRules
 	public GatherAndHuntEditorTarget(TargetInfo Target) : base(Target)
 	{
 		Type = TargetType.Editor;
-		DefaultBuildSettings = BuildSettingsVersion.V4;
+		DefaultBuildSettings = BuildSettingsVersion.V7;
+		IncludeOrderVersion = EngineIncludeOrderVersion.Unreal5_8;
 
-		ExtraModuleNames.AddRange( new string[] { "GatherAndHunt" } );
+		ExtraModuleNames.AddRange( new string[] { "GatherAndHunt", "TurtleSim", "TurtleGame" } );
 	}
 }
