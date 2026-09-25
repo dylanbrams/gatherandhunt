@@ -110,6 +110,9 @@ void ATurtleGameMode::StartMatchWithGeneratedBoard()
 	bHasPlan0 = bHasPlan1 = false;
 	LastResolvedTurn = -1;
 	LastTurnResultBytes.Reset();
+	bMatchEndPending = false;
+	PendingWinnerSlot = -1;
+	PendingEndReason = EMatchEndReason::NotEnded;
 
 	// Send everyone the initial board.
 	if (ATurtleGameState* GS = GetTurtleGameState())
@@ -120,6 +123,8 @@ void ATurtleGameMode::StartMatchWithGeneratedBoard()
 		GS->MatchState.ScorePlayer1     = ServerBoardState.ScorePlayer1;
 		GS->MatchState.bPlayer0Submitted = false;
 		GS->MatchState.bPlayer1Submitted = false;
+		GS->MatchState.WinnerSlot        = -1;
+		GS->MatchState.EndReason         = EMatchEndReason::NotEnded;
 	}
 	TransitionTo(EMatchPhase::Planning);
 }
@@ -154,11 +159,15 @@ void ATurtleGameMode::ConfigurePhaseTimers(EMatchPhase NewPhase)
 		}
 		else if (NewPhase == EMatchPhase::Animating && PlaybackTimeoutSeconds > 0.0f)
 		{
+			// Clients acknowledge when their animation finishes, so the deadline has
+			// to clear the animation itself or every long turn would time out.
+			const float Timeout = PlaybackTimeoutSeconds
+				+ LastTurnTickCount * FMath::Max(0.0f, EstimatedSecondsPerTick);
 			World->GetTimerManager().SetTimer(
 				PlaybackTimeoutHandle,
 				this,
 				&ATurtleGameMode::HandlePlaybackTimeout,
-				PlaybackTimeoutSeconds,
+				Timeout,
 				false);
 		}
 	}
@@ -294,6 +303,7 @@ void ATurtleGameMode::ResolveAndBroadcast()
 	PendingPlan1 = turtlesim::TurnPlan{};
 	bPlayer0AckedPlayback = bPlayer1AckedPlayback = false;
 	LastResolvedTurn = ServerBoardState.TurnNumber;
+	LastTurnTickCount = static_cast<int32>(Result.Ticks.size());
 
 	// Refresh replicated state.
 	if (ATurtleGameState* GS = GetTurtleGameState())
@@ -334,32 +344,105 @@ void ATurtleGameMode::StartNextPlanningPhaseIfReady()
 {
 	if (!(bPlayer0AckedPlayback && bPlayer1AckedPlayback)) return;
 	if (GetTurtleGameState() && GetTurtleGameState()->MatchState.Phase == EMatchPhase::Ended) return;
+
+	if (bMatchEndPending)
+	{
+		if (ATurtleGameState* GS = GetTurtleGameState())
+		{
+			GS->MatchState.WinnerSlot = PendingWinnerSlot;
+			GS->MatchState.EndReason  = PendingEndReason;
+		}
+		TransitionTo(EMatchPhase::Ended);
+		return;
+	}
+
 	TransitionTo(EMatchPhase::Planning);
+}
+
+FTurtleMatchOutcome ATurtleGameMode::EvaluateMatchOutcome(const turtlesim::BoardState& State, int32 InMaxTurns)
+{
+	bool bAllObjectivesDone = true;
+	for (const auto& O : State.Objectives)
+	{
+		if (!O.bClaimed) { bAllObjectivesDone = false; break; }
+	}
+	// A delivered turtle is still alive, it just isn't on the board any more, so
+	// "in play" and "surviving" are different counts and the tiebreaks need both.
+	int32 InPlay0 = 0, InPlay1 = 0;
+	int32 Delivered0 = 0, Delivered1 = 0;
+	int32 Surviving0 = 0, Surviving1 = 0;
+	bool bAnyCarrierStillActive = false;
+	for (const auto& T : State.Turtles)
+	{
+		if (T.Owner == 0)
+		{
+			if (T.bAlive) ++Surviving0;
+			if (T.bDelivered) ++Delivered0;
+		}
+		else if (T.Owner == 1)
+		{
+			if (T.bAlive) ++Surviving1;
+			if (T.bDelivered) ++Delivered1;
+		}
+
+		if (!T.bAlive || T.bDelivered) continue;
+		if (T.Owner == 0) ++InPlay0;
+		if (T.Owner == 1) ++InPlay1;
+		if (T.CarriedPoints > 0) bAnyCarrierStillActive = true;
+	}
+
+	const bool bTurnLimit = State.TurnNumber >= InMaxTurns;
+	const bool bOutOfPlay = (InPlay0 == 0) || (InPlay1 == 0);
+	const bool bAllDone   = bAllObjectivesDone && !bAnyCarrierStillActive;
+
+	FTurtleMatchOutcome Outcome;
+	if (!(bTurnLimit || bOutOfPlay || bAllDone))
+	{
+		return Outcome;
+	}
+
+	Outcome.bEnded = true;
+	// Several conditions can fire on the same turn, so one has to be picked; the
+	// order runs most specific to least.
+	Outcome.Reason = bOutOfPlay ? EMatchEndReason::TeamOutOfPlay
+		: (bAllDone ? EMatchEndReason::ObjectivesGone : EMatchEndReason::TurnLimit);
+
+	// Spec §13: score, then turtles delivered, then turtles surviving, then a draw.
+	// Points only count once delivered, so a side wiped out while ahead still wins
+	// on what it banked.
+	const int32 Ladder[][2] = {
+		{ State.ScorePlayer0, State.ScorePlayer1 },
+		{ Delivered0,         Delivered1         },
+		{ Surviving0,         Surviving1         },
+	};
+	Outcome.WinnerSlot = -1;
+	for (const int32(&Rung)[2] : Ladder)
+	{
+		if (Rung[0] != Rung[1])
+		{
+			Outcome.WinnerSlot = Rung[0] > Rung[1] ? 0 : 1;
+			break;
+		}
+	}
+	return Outcome;
 }
 
 void ATurtleGameMode::CheckEndConditions()
 {
-	bool bAllObjectivesDone = true;
-	for (const auto& O : ServerBoardState.Objectives)
+	const FTurtleMatchOutcome Outcome = EvaluateMatchOutcome(ServerBoardState, MaxTurns);
+	if (!Outcome.bEnded)
 	{
-		if (!O.bClaimed) { bAllObjectivesDone = false; break; }
-	}
-	int32 Alive0 = 0, Alive1 = 0;
-	bool bAnyCarrierStillActive = false;
-	for (const auto& T : ServerBoardState.Turtles)
-	{
-		if (!T.bAlive || T.bDelivered) continue;
-		if (T.Owner == 0) ++Alive0;
-		if (T.Owner == 1) ++Alive1;
-		if (T.CarriedPoints > 0) bAnyCarrierStillActive = true;
+		return;
 	}
 
-	const bool bTurnLimit = ServerBoardState.TurnNumber >= MaxTurns;
-	const bool bWipe      = (Alive0 == 0) || (Alive1 == 0);
-	const bool bAllDone   = bAllObjectivesDone && !bAnyCarrierStillActive;
+	// The end is recorded, not applied: clients are animating the turn that
+	// triggered it, and switching to Ended now would cut that animation short.
+	// StartNextPlanningPhaseIfReady enters Ended once playback is acknowledged.
+	bMatchEndPending  = true;
+	PendingEndReason  = Outcome.Reason;
+	PendingWinnerSlot = Outcome.WinnerSlot;
 
-	if (bTurnLimit || bWipe || bAllDone)
-	{
-		TransitionTo(EMatchPhase::Ended);
-	}
+	UE_LOG(LogTemp, Log, TEXT("TurtleGameMode: match end pending, reason=%s winner=%d (%d-%d)"),
+		*UEnum::GetValueAsString(Outcome.Reason), Outcome.WinnerSlot,
+		ServerBoardState.ScorePlayer0, ServerBoardState.ScorePlayer1);
 }

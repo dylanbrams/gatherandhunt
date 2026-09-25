@@ -29,18 +29,25 @@ void ATurtlePlayerController::ServerSubmitTurnPlan_Implementation(const TArray<u
 
 void ATurtlePlayerController::ClientReceiveTickLog_Implementation(const TArray<uint8>& SerializedTurnResult)
 {
-	// Phase 3 will hand this to the playback controller. For now, log so a
-	// headless test can confirm round-trip delivery.
 	UE_LOG(LogTemp, Log, TEXT("ClientReceiveTickLog: received %d bytes"), SerializedTurnResult.Num());
 
 	turtlesim::TurnResult Decoded;
 	if (TurtleSimWire::DeserializeTurnResult(SerializedTurnResult, Decoded))
 	{
-		if (ATurtleGameState* GS = GetWorld() ? GetWorld()->GetGameState<ATurtleGameState>() : nullptr)
+		ATurtleGameState* GS = GetWorld() ? GetWorld()->GetGameState<ATurtleGameState>() : nullptr;
+		if (GS)
 		{
 			GS->ApplyTurnResult(Decoded);
 		}
-		ServerAcknowledgePlayback(Decoded.FinalState.TurnNumber);
+		// A presenter that animates the turn acknowledges it when the animation
+		// finishes; acknowledging here as well would let the server start the next
+		// turn while this client is still playing the last one back. With no
+		// presenter there is nothing to wait for, so acknowledge straight away
+		// rather than making the server wait out its playback timeout.
+		if (!GS || !GS->HasPlaybackObserver())
+		{
+			ServerAcknowledgePlayback(Decoded.FinalState.TurnNumber);
+		}
 	}
 	else
 	{

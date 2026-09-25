@@ -60,6 +60,10 @@ public:
 	// on the owning local PlayerController on completion (if bAutoAcknowledgeServer).
 	void StartPlayback(const turtlesim::BoardState& StartState, const turtlesim::TurnResult& Result);
 
+	// Jumps straight to the result's final state and acknowledges it, for when
+	// there is nothing to animate from (a mid-match join) or nothing to animate.
+	void SkipPlayback(const turtlesim::TurnResult& Result);
+
 	UFUNCTION(BlueprintCallable, Category = "Turtle|Playback")
 	void StopPlayback();
 

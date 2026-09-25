@@ -38,6 +38,10 @@ void ABoardPresenter::BeginPlay()
 			auto& Delegate = const_cast<ATurtleGameState::FOnTurtleCachedStateChanged&>(GS->OnCachedStateChanged());
 			CachedStateChangedHandle = Delegate.AddUObject(this, &ABoardPresenter::HandleCachedStateChanged);
 
+			// From here on this presenter owns acknowledging each turn's playback.
+			GS->RegisterPlaybackObserver();
+			bRegisteredPlaybackObserver = true;
+
 			// If state was already replicated before BeginPlay, sync now.
 			if (GS->HasCachedBoardState())
 			{
@@ -53,7 +57,12 @@ void ABoardPresenter::EndPlay(const EEndPlayReason::Type Reason)
 	{
 		auto& Delegate = const_cast<ATurtleGameState::FOnTurtleCachedStateChanged&>(GS->OnCachedStateChanged());
 		Delegate.Remove(CachedStateChangedHandle);
+		if (bRegisteredPlaybackObserver)
+		{
+			GS->UnregisterPlaybackObserver();
+		}
 	}
+	bRegisteredPlaybackObserver = false;
 	DespawnAll();
 	Super::EndPlay(Reason);
 }
@@ -74,18 +83,19 @@ void ABoardPresenter::HandleCachedStateChanged()
 	if (Result && Playback && Result->FinalState.TurnNumber != LastAnimatedTurn)
 	{
 		LastAnimatedTurn = Result->FinalState.TurnNumber;
-		// We don't have the start-of-turn state directly; use the *previous* cached
-		// state if we tracked it. For v1 simplicity, snap to the start by replaying
-		// from the FinalState's negation isn't possible — instead we snap to the
-		// current visuals and let the controller's per-tick targets walk forward.
-		// The controller's ApplyBoardStateInstant inside StartPlayback uses the
-		// passed-in StartState, so we pass a synthesized "state minus this turn's
-		// movement" by taking the ResetTo positions from event FromPositions where
-		// available. Pragmatic: just animate forward from current visuals.
-		//
-		// We pass FinalState here as the "instant snap target" only if there are no
-		// ticks; with ticks present, BeginTick will set targets explicitly per event.
-		Playback->StartPlayback(*CachedState, *Result);
+		// Animate forward from the board as it stood before this turn. Passing the
+		// cached (post-turn) state here instead would snap every piece to where it
+		// ends up and then "animate" from there. When the pre-turn board isn't
+		// recoverable — a mid-match join — snapping to the final state is the
+		// honest fallback.
+		if (const turtlesim::BoardState* StartState = GS->GetPlaybackStartBoardState())
+		{
+			Playback->StartPlayback(*StartState, *Result);
+		}
+		else
+		{
+			Playback->SkipPlayback(*Result);
+		}
 	}
 	else if (Playback && !Playback->IsPlaying())
 	{

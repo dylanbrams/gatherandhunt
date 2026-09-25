@@ -2,6 +2,7 @@
 
 #include "Misc/AutomationTest.h"
 
+#include "Match/TurtleGameMode.h"
 #include "Match/TurtleGameState.h"
 #include "Net/TurtleSerializer.h"
 
@@ -244,6 +245,186 @@ bool FTurtleGameStateApplyTurnResultTest::RunTest(const FString&)
 	TestTrue(TEXT("Board cache populated from turn result"), GS->HasCachedBoardState());
 	TestTrue(TEXT("Cached final board matches turn result"), EqualBoardState(*GS->GetCachedBoardState(), Result.FinalState));
 	TestTrue(TEXT("Cached turn result matches input"), EqualTurnResult(*GS->GetLastReceivedTurnResult(), Result));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FTurtleGamePlaybackStartStateTest,
+	"GatherAndHunt.TurtleGame.GameState.PlaybackStartState",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FTurtleGamePlaybackStartStateTest::RunTest(const FString&)
+{
+	// MakeBoardState/MakeTurnResult are both at turn 3, so the board before the
+	// result is the same board at turn 2.
+	BoardState Before = MakeBoardState();
+	Before.TurnNumber = 2;
+	const TurnResult Result = MakeTurnResult();
+
+	{
+		ATurtleGameState* GS = NewObject<ATurtleGameState>();
+		GS->ApplyFullBoardState(Before);
+		TestNull(TEXT("No start state before any turn result"), GS->GetPlaybackStartBoardState());
+
+		GS->ApplyTurnResult(Result);
+		const BoardState* Start = GS->GetPlaybackStartBoardState();
+		if (TestNotNull(TEXT("Start state recovered after a turn result"), Start))
+		{
+			TestTrue(TEXT("Start state is the pre-turn board, not the final one"), EqualBoardState(*Start, Before));
+		}
+	}
+
+	{
+		// The replicated MatchState carries the same post-turn board as the tick log
+		// RPC and may arrive first; the pre-turn board has to survive that.
+		ATurtleGameState* GS = NewObject<ATurtleGameState>();
+		GS->ApplyFullBoardState(Before);
+		GS->ApplyFullBoardState(Result.FinalState);
+		GS->ApplyTurnResult(Result);
+		TestNull(TEXT("A full-state resync gives up the start state rather than guessing"),
+			GS->GetPlaybackStartBoardState());
+	}
+
+	{
+		// A client joining mid-match gets the final board and then the tick log for
+		// a turn it never saw the start of.
+		ATurtleGameState* GS = NewObject<ATurtleGameState>();
+		GS->ApplyFullBoardState(Result.FinalState);
+		GS->ApplyTurnResult(Result);
+		TestNull(TEXT("No start state for a mid-match join"), GS->GetPlaybackStartBoardState());
+	}
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FTurtleGamePlaybackObserverTest,
+	"GatherAndHunt.TurtleGame.GameState.PlaybackObserver",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FTurtleGamePlaybackObserverTest::RunTest(const FString&)
+{
+	ATurtleGameState* GS = NewObject<ATurtleGameState>();
+	TestFalse(TEXT("No observer by default"), GS->HasPlaybackObserver());
+
+	GS->RegisterPlaybackObserver();
+	GS->RegisterPlaybackObserver();
+	TestTrue(TEXT("Observer present"), GS->HasPlaybackObserver());
+
+	GS->UnregisterPlaybackObserver();
+	TestTrue(TEXT("Still observed while one remains"), GS->HasPlaybackObserver());
+
+	GS->UnregisterPlaybackObserver();
+	TestFalse(TEXT("Last unregister clears it"), GS->HasPlaybackObserver());
+
+	GS->UnregisterPlaybackObserver();
+	TestFalse(TEXT("Unbalanced unregister doesn't go negative"), GS->HasPlaybackObserver());
+	return true;
+}
+
+namespace
+{
+	// A board mid-match: both sides have a turtle in play and one objective is
+	// still out there, so nothing has ended yet.
+	static BoardState MakeRunningBoard()
+	{
+		BoardState B;
+		B.Size = IntVec3(11, 11, 11);
+		B.TurnNumber = 5;
+
+		Turtle T0; T0.Id = 1; T0.Owner = 0; T0.Position = IntVec3(1, 1, 1);
+		Turtle T1; T1.Id = 2; T1.Owner = 1; T1.Position = IntVec3(9, 9, 9);
+		B.Turtles.push_back(T0);
+		B.Turtles.push_back(T1);
+
+		Objective J; J.Id = 10; J.PointValue = 3; J.Position = IntVec3(5, 5, 5); J.bClaimed = false;
+		B.Objectives.push_back(J);
+		return B;
+	}
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FTurtleGameMatchOutcomeTest,
+	"GatherAndHunt.TurtleGame.GameMode.MatchOutcome",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FTurtleGameMatchOutcomeTest::RunTest(const FString&)
+{
+	constexpr int32 MaxTurns = 20;
+
+	{
+		const FTurtleMatchOutcome Out = ATurtleGameMode::EvaluateMatchOutcome(MakeRunningBoard(), MaxTurns);
+		TestFalse(TEXT("A running match hasn't ended"), Out.bEnded);
+		TestEqual(TEXT("No winner while running"), Out.WinnerSlot, -1);
+		TestTrue(TEXT("No end reason while running"), Out.Reason == EMatchEndReason::NotEnded);
+	}
+
+	{
+		BoardState B = MakeRunningBoard();
+		B.TurnNumber = MaxTurns;
+		B.ScorePlayer0 = 9;
+		B.ScorePlayer1 = 4;
+		const FTurtleMatchOutcome Out = ATurtleGameMode::EvaluateMatchOutcome(B, MaxTurns);
+		TestTrue(TEXT("Turn limit ends the match"), Out.bEnded);
+		TestTrue(TEXT("Turn limit is the reason"), Out.Reason == EMatchEndReason::TurnLimit);
+		TestEqual(TEXT("Higher score wins"), Out.WinnerSlot, 0);
+	}
+
+	{
+		// Spec §13 tiebreak ladder: score, then delivered, then surviving, then draw.
+		BoardState B = MakeRunningBoard();
+		B.TurnNumber = MaxTurns;
+		B.ScorePlayer0 = 6;
+		B.ScorePlayer1 = 6;
+		TestEqual(TEXT("Level on every rung is a draw"),
+			ATurtleGameMode::EvaluateMatchOutcome(B, MaxTurns).WinnerSlot, -1);
+
+		// A delivered turtle is still alive, so this leaves the survivor counts level
+		// and the delivery rung alone decides it.
+		B.Turtles[1].bDelivered = true;
+		TestEqual(TEXT("Level scores break on turtles delivered"),
+			ATurtleGameMode::EvaluateMatchOutcome(B, MaxTurns).WinnerSlot, 1);
+
+		// Level again on score and deliveries; player 0 has a turtle left alive.
+		B.Turtles[1].bDelivered = false;
+		B.Turtles[1].bAlive = false;
+		TestEqual(TEXT("Level deliveries break on turtles surviving"),
+			ATurtleGameMode::EvaluateMatchOutcome(B, MaxTurns).WinnerSlot, 0);
+	}
+
+	{
+		// Player 0 is wiped out but banked more points than player 1 managed.
+		BoardState B = MakeRunningBoard();
+		B.Turtles[0].bAlive = false;
+		B.ScorePlayer0 = 7;
+		B.ScorePlayer1 = 2;
+		const FTurtleMatchOutcome Out = ATurtleGameMode::EvaluateMatchOutcome(B, MaxTurns);
+		TestTrue(TEXT("An empty side ends the match"), Out.bEnded);
+		TestTrue(TEXT("Out of play is the reason"), Out.Reason == EMatchEndReason::TeamOutOfPlay);
+		TestEqual(TEXT("Delivered points win even after a wipe"), Out.WinnerSlot, 0);
+	}
+
+	{
+		// Every objective claimed and nobody still carrying: nothing left to play for.
+		BoardState B = MakeRunningBoard();
+		B.Objectives[0].bClaimed = true;
+		B.ScorePlayer0 = 1;
+		B.ScorePlayer1 = 5;
+		const FTurtleMatchOutcome Out = ATurtleGameMode::EvaluateMatchOutcome(B, MaxTurns);
+		TestTrue(TEXT("Exhausted objectives end the match"), Out.bEnded);
+		TestTrue(TEXT("Objectives gone is the reason"), Out.Reason == EMatchEndReason::ObjectivesGone);
+		TestEqual(TEXT("Higher score wins"), Out.WinnerSlot, 1);
+	}
+
+	{
+		// Same board, but a turtle is still carrying points home.
+		BoardState B = MakeRunningBoard();
+		B.Objectives[0].bClaimed = true;
+		B.Turtles[0].CarriedPoints = 3;
+		const FTurtleMatchOutcome Out = ATurtleGameMode::EvaluateMatchOutcome(B, MaxTurns);
+		TestFalse(TEXT("A carrier still in play keeps the match alive"), Out.bEnded);
+	}
+
 	return true;
 }
 

@@ -11,6 +11,14 @@
 class ATurtleGameState;
 class ATurtlePlayerController;
 
+// The verdict on a board: whether the match is over, and if so who won and why.
+struct FTurtleMatchOutcome
+{
+	bool bEnded = false;
+	int32 WinnerSlot = -1; // -1 is a draw.
+	EMatchEndReason Reason = EMatchEndReason::NotEnded;
+};
+
 UCLASS()
 class TURTLEGAME_API ATurtleGameMode : public AGameModeBase
 {
@@ -44,8 +52,15 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category = "Turtle|Match")
 	float PlanningTimeoutSeconds = 30.0f;
 
+	// Grace period on top of the estimated animation length, not the whole budget:
+	// the Animating phase waits EstimatedSecondsPerTick per tick plus this before
+	// giving up on a client's acknowledgement.
 	UPROPERTY(EditDefaultsOnly, Category = "Turtle|Match")
 	float PlaybackTimeoutSeconds = 2.0f;
+
+	// Should track UTurtlePlaybackController::SecondsPerTick.
+	UPROPERTY(EditDefaultsOnly, Category = "Turtle|Match")
+	float EstimatedSecondsPerTick = 0.6f;
 
 	// --- AGameModeBase overrides ---
 	virtual void BeginPlay() override;
@@ -63,6 +78,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Turtle|Match")
 	void StartMatchWithGeneratedBoard();
 
+	// Pure verdict on a board, split out from the phase machine so it can be
+	// tested on its own.
+	static FTurtleMatchOutcome EvaluateMatchOutcome(const turtlesim::BoardState& State, int32 InMaxTurns);
+
 protected:
 	// Server-only authoritative simulation state.
 	turtlesim::BoardState ServerBoardState;
@@ -73,11 +92,18 @@ protected:
 
 	// Track which clients have ack'd the current turn's playback.
 	int32 LastResolvedTurn = -1;
+	int32 LastTurnTickCount = 0;
 	bool bPlayer0AckedPlayback = false;
 	bool bPlayer1AckedPlayback = false;
 	TArray<uint8> LastTurnResultBytes;
 	FTimerHandle PlanningTimeoutHandle;
 	FTimerHandle PlaybackTimeoutHandle;
+
+	// The match is over, but the Ended phase waits for clients to finish animating
+	// the turn that ended it. See CheckEndConditions.
+	bool bMatchEndPending = false;
+	int32 PendingWinnerSlot = -1;
+	EMatchEndReason PendingEndReason = EMatchEndReason::NotEnded;
 
 	// Slot assignment.
 	TWeakObjectPtr<ATurtlePlayerController> SlotControllers[2];
@@ -88,7 +114,6 @@ protected:
 	void HandlePlanningTimeout();
 	void HandlePlaybackTimeout();
 	void SendCurrentStateTo(ATurtlePlayerController* PC);
-	void TryAdvanceFromAwaitingPlans();
 	void ResolveAndBroadcast();
 	void CheckEndConditions();
 	void StartNextPlanningPhaseIfReady();

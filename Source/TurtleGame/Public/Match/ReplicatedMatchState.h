@@ -32,4 +32,11 @@ struct TURTLEGAME_API FReplicatedMatchState
 
 	UPROPERTY(BlueprintReadOnly)
 	bool bPlayer1Submitted = false;
+
+	// Valid once Phase is Ended: the winning slot, or -1 for a draw.
+	UPROPERTY(BlueprintReadOnly)
+	int32 WinnerSlot = -1;
+
+	UPROPERTY(BlueprintReadOnly)
+	EMatchEndReason EndReason = EMatchEndReason::NotEnded;
 };

@@ -1,6 +1,20 @@
 cmake_minimum_required(VERSION 3.20)
 project(TurtleSim CXX)
 
+# UnrealBuildTool compiles every .cpp under this directory into the UE TurtleSim
+# module, CMake's own compiler-probe sources included, which then collide over
+# main() at link time. So the build tree has to sit outside the module.
+get_filename_component(_turtlesim_src "${CMAKE_CURRENT_SOURCE_DIR}" REALPATH)
+get_filename_component(_turtlesim_bin "${CMAKE_BINARY_DIR}" REALPATH)
+string(FIND "${_turtlesim_bin}" "${_turtlesim_src}" _turtlesim_bin_inside_src)
+if(_turtlesim_bin_inside_src EQUAL 0)
+    message(FATAL_ERROR
+        "The build directory must not be inside Source/TurtleSim -- UnrealBuildTool "
+        "would compile CMake's scratch sources into the UE module and fail to link.\n"
+        "Configure into the project's Intermediate folder instead, e.g.\n"
+        "  cmake -S . -B ../../Intermediate/TurtleSimCMake")
+endif()
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)

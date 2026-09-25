@@ -49,4 +49,5 @@ private:
 	FDelegateHandle CachedStateChangedHandle;
 	TWeakObjectPtr<ATurtleGameState> ObservedGameState;
 	int32 LastAnimatedTurn = INDEX_NONE;
+	bool bRegisteredPlaybackObserver = false;
 };

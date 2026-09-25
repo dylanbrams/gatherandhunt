@@ -100,10 +100,7 @@ void UTurtlePlaybackController::StartPlayback(const turtlesim::BoardState& Start
 {
 	if (Result.Ticks.empty())
 	{
-		// Nothing to animate; just snap to final state and ack.
-		ApplyBoardStateInstant(Result.FinalState);
-		PendingAckTurnNumber = Result.FinalState.TurnNumber;
-		FinishPlayback();
+		SkipPlayback(Result);
 		return;
 	}
 
@@ -114,6 +111,16 @@ void UTurtlePlaybackController::StartPlayback(const turtlesim::BoardState& Start
 	PendingAckTurnNumber = Result.FinalState.TurnNumber;
 	OnPlaybackStarted.Broadcast();
 	BeginTick(0);
+}
+
+void UTurtlePlaybackController::SkipPlayback(const turtlesim::TurnResult& Result)
+{
+	bIsPlaying = false;
+	ActiveTickIndex = INDEX_NONE;
+	ActiveResult = Result;
+	PendingAckTurnNumber = Result.FinalState.TurnNumber;
+	// Snaps to ActiveResult.FinalState and acknowledges the turn.
+	FinishPlayback();
 }
 
 void UTurtlePlaybackController::StopPlayback()
