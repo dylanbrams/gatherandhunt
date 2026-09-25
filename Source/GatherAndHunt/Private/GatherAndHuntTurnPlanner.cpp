@@ -248,7 +248,7 @@ void UGatherAndHuntTurnPlanner::SelectMove(const int32 MoveIndex)
 
 void UGatherAndHuntTurnPlanner::AddMove(const EGatherAndHuntPuzzleMoveKind MoveKind)
 {
-	if (SelectedTurtleId == INDEX_NONE)
+	if (SelectedTurtleId == INDEX_NONE || !IsMoveAvailable(MoveKind))
 	{
 		return;
 	}
@@ -259,6 +259,12 @@ void UGatherAndHuntTurnPlanner::AddMove(const EGatherAndHuntPuzzleMoveKind MoveK
 	// leaves it at the end so repeated key presses keep appending.
 	SelectedMoveIndex = InsertAt < Moves.Num() - 1 ? InsertAt : INDEX_NONE;
 	MarkEdited();
+}
+
+bool UGatherAndHuntTurnPlanner::IsMoveAvailable(const EGatherAndHuntPuzzleMoveKind MoveKind) const
+{
+	// The puzzle limits the player's moves; scripted turtles can use any.
+	return bEditingScript || Session == nullptr || Session->IsMoveAllowed(MoveKind);
 }
 
 void UGatherAndHuntTurnPlanner::RemoveMove(const int32 MoveIndex)
@@ -463,6 +469,10 @@ void UGatherAndHuntTurnPlanner::Recompute()
 	{
 		TotalCost = turtlesim::CostModel::TurnCost(PlayerPart);
 		Validation = UGatherAndHuntPuzzleSession::BuildValidation(turtlesim::ValidateTurnPlan(Board, PlayerPart, Budget));
+		if (Validation.bIsValid && Session != nullptr)
+		{
+			Validation = Session->CheckPuzzleRules(BuildPlanForRoles(true, false, false));
+		}
 	}
 
 	turtlesim::TurnPlan TeamPlan = PlayerPart;

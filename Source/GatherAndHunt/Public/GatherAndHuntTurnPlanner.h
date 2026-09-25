@@ -210,8 +210,14 @@ public:
 
 	// --- Editing the selected turtle's queue ---
 	// Inserts after the selected move (or appends) and selects the new move.
+	// Ignored for moves the puzzle doesn't allow (see IsMoveAvailable).
 	UFUNCTION(BlueprintCallable, Category = "GatherAndHunt|Planner")
 	void AddMove(EGatherAndHuntPuzzleMoveKind MoveKind);
+
+	// Whether AddMove accepts this move: the puzzle's allowed moves on the
+	// player's side, anything while editing the script.
+	UFUNCTION(BlueprintPure, Category = "GatherAndHunt|Planner")
+	bool IsMoveAvailable(EGatherAndHuntPuzzleMoveKind MoveKind) const;
 
 	UFUNCTION(BlueprintCallable, Category = "GatherAndHunt|Planner")
 	void RemoveMove(int32 MoveIndex);

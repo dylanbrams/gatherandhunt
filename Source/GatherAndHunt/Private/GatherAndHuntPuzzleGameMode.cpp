@@ -22,6 +22,10 @@ void AGatherAndHuntPuzzleGameMode::InitGame(const FString& MapName, const FStrin
 	{
 		AutoLoadPuzzleRelativeFilename = PuzzleOption;
 	}
+	if (UGameplayStatics::HasOption(Options, TEXT("Edit")))
+	{
+		bStartInBoardEditor = true;
+	}
 }
 
 void AGatherAndHuntPuzzleGameMode::BeginPlay()

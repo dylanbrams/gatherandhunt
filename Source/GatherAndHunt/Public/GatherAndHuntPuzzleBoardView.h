@@ -7,6 +7,7 @@
 
 class AGatherAndHuntPuzzlePieceActor;
 class UCameraComponent;
+class UGatherAndHuntBoardEditor;
 class UGatherAndHuntPuzzlePlaybackComponent;
 class UGatherAndHuntPuzzleSession;
 class UGatherAndHuntTurnPlanner;
@@ -33,9 +34,22 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "GatherAndHunt|BoardView")
 	void Bind(UGatherAndHuntPuzzleSession* InSession, UGatherAndHuntTurnPlanner* InPlanner);
 
-	// Respawns piece actors from the session's current board and reframes the camera.
+	// Respawns piece actors from the session's current board. Reframes the
+	// camera if asked, or if the board's size changed.
 	UFUNCTION(BlueprintCallable, Category = "GatherAndHunt|BoardView")
-	void RebuildBoard();
+	void RebuildBoard(bool bReframe = true);
+
+	// While set, draws the board editor's cursor and hazard paths instead of the
+	// planner's preview, and follows its edits. nullptr goes back to the planner.
+	UFUNCTION(BlueprintCallable, Category = "GatherAndHunt|BoardView")
+	void SetBoardEditor(UGatherAndHuntBoardEditor* InBoardEditor);
+
+	// Cell under a view ray: the nearest piece it passes through, else where it
+	// crosses the board editor's cursor layer. False if it misses the board.
+	bool PickEditorCell(const FVector& RayOrigin, const FVector& RayDirection, FIntVector& OutCell) const;
+
+	UFUNCTION(BlueprintPure, Category = "GatherAndHunt|BoardView")
+	float GetCameraYaw() const;
 
 	UFUNCTION(BlueprintCallable, Category = "GatherAndHunt|BoardView")
 	void RedrawPreview();
@@ -83,9 +97,14 @@ private:
 	UFUNCTION()
 	void HandlePlaybackFinished();
 
+	UFUNCTION()
+	void HandleBoardEditorChanged(bool bBoardChanged);
+
+	void DrawEditorOverlay();
 	void ClearPieces();
 	void EnsureLighting();
 	void DrawBounds();
+	void DrawGround(const FIntVector& Size);
 	void DrawTrack(UInstancedStaticMeshComponent* PathMesh, const struct FGatherAndHuntPlannerTurtleTrack& Track);
 	void AddBar(UInstancedStaticMeshComponent* Target, const FVector& From, const FVector& To, float Thickness);
 	void AddCube(UInstancedStaticMeshComponent* Target, const FVector& Center, float Size);
@@ -132,11 +151,30 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UGatherAndHuntPuzzleSession> Session;
 
+	UPROPERTY(VisibleAnywhere, Category = "GatherAndHunt|BoardView")
+	TObjectPtr<UInstancedStaticMeshComponent> EditorCursorMesh;
+
+	UPROPERTY(VisibleAnywhere, Category = "GatherAndHunt|BoardView")
+	TObjectPtr<UInstancedStaticMeshComponent> EditorLayerMesh;
+
+	UPROPERTY(VisibleAnywhere, Category = "GatherAndHunt|BoardView")
+	TObjectPtr<UInstancedStaticMeshComponent> HazardPathMesh;
+
+	// Grass field under the board, for puzzles that ask for it.
+	UPROPERTY(VisibleAnywhere, Category = "GatherAndHunt|BoardView")
+	TObjectPtr<UInstancedStaticMeshComponent> GroundMesh;
+
 	UPROPERTY(Transient)
 	TObjectPtr<UGatherAndHuntTurnPlanner> Planner;
 
 	UPROPERTY(Transient)
+	TObjectPtr<UGatherAndHuntBoardEditor> BoardEditor;
+
+	UPROPERTY(Transient)
 	TArray<TObjectPtr<AGatherAndHuntPuzzlePieceActor>> Pieces;
+
+	// Board size the camera was last framed for.
+	FIntVector FramedGridSize = FIntVector::ZeroValue;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UStaticMesh> CubeMesh;

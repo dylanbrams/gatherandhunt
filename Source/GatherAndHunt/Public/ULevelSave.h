@@ -74,6 +74,23 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	TArray<FScriptedOpponentTurnData> ScriptedOpponentTurns;
 
+	// --- Puzzle rules (trailer version 3) ---
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	EGatherAndHuntPuzzleGoal Goal = EGatherAndHuntPuzzleGoal::Deliver;
+
+	// Moves the player may queue, as bits (1 << EGatherAndHuntPuzzleMoveKind).
+	// The tutorial adds buttons puzzle by puzzle. Scripted turtles aren't limited.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	int32 AllowedMoveMask = GatherAndHuntAllMovesMask;
+
+	// Draw the grass field under the board.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	bool bShowGround = false;
+
+	// How many player turtles may move in one turn; 0 = no limit.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	int32 MaxTurtlesMovedPerTurn = 0;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	int32 AvailableActionsID;
 	

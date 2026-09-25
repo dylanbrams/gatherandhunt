@@ -4,15 +4,26 @@
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "GameFramework/PlayerController.h"
+#include "GatherAndHuntBoardEditor.h"
+#include "GatherAndHuntBoardEditorWidget.h"
 #include "GatherAndHuntPlannerWidget.h"
 #include "GatherAndHuntPuzzleBlueprintLibrary.h"
 #include "GatherAndHuntPuzzleBoardView.h"
+#include "GatherAndHuntPuzzleGameMode.h"
+#include "GatherAndHuntPuzzleSession.h"
 #include "GatherAndHuntTurnPlanner.h"
+#include "Misc/Paths.h"
+
+namespace
+{
+	const FIntVector DefaultNewBoardSize(6, 6, 3);
+}
 
 AGatherAndHuntPuzzleHUD::AGatherAndHuntPuzzleHUD()
 {
 	PrimaryActorTick.bCanEverTick = true;
 	PlannerWidgetClass = UGatherAndHuntPlannerWidget::StaticClass();
+	BoardEditorWidgetClass = UGatherAndHuntBoardEditorWidget::StaticClass();
 	BoardViewClass = AGatherAndHuntPuzzleBoardView::StaticClass();
 }
 
@@ -40,6 +51,7 @@ bool AGatherAndHuntPuzzleHUD::TryInitialize()
 
 	Planner = NewObject<UGatherAndHuntTurnPlanner>(this);
 	Planner->BindToSession(Session);
+	BoardEditor = NewObject<UGatherAndHuntBoardEditor>(this);
 
 	for (TActorIterator<AGatherAndHuntPuzzleBoardView> It(World); It; ++It)
 	{
@@ -60,17 +72,96 @@ bool AGatherAndHuntPuzzleHUD::TryInitialize()
 	PlannerWidget = CreateWidget<UGatherAndHuntPlannerWidget>(
 		PC,
 		PlannerWidgetClass != nullptr ? PlannerWidgetClass.Get() : UGatherAndHuntPlannerWidget::StaticClass());
-	PlannerWidget->AddToViewport();
 	PlannerWidget->Bind(Session, Planner, BoardView);
+
+	BoardEditorWidget = CreateWidget<UGatherAndHuntBoardEditorWidget>(
+		PC,
+		BoardEditorWidgetClass != nullptr ? BoardEditorWidgetClass.Get() : UGatherAndHuntBoardEditorWidget::StaticClass());
 
 	// The board view owns the camera; keep possession from stealing it back.
 	PC->bAutoManageActiveCameraTarget = false;
 	PC->SetViewTarget(BoardView);
 	PC->SetShowMouseCursor(true);
 
+	const AGatherAndHuntPuzzleGameMode* const GameMode = World->GetAuthGameMode<AGatherAndHuntPuzzleGameMode>();
+	const bool bStartEditing = GameMode != nullptr && GameMode->bStartInBoardEditor;
+	if (bStartEditing && !Session->IsPuzzleLoaded())
+	{
+		// ?Edit with a file that doesn't exist yet: start that puzzle empty.
+		const FString File = GameMode->AutoLoadPuzzleRelativeFilename;
+		BoardEditor->BindToSession(Session);
+		BoardEditor->NewPuzzle(File.IsEmpty() ? TEXT("New puzzle") : FPaths::GetBaseFilename(File), DefaultNewBoardSize);
+	}
+	if (GameMode != nullptr)
+	{
+		BoardEditorWidget->SetTargetFile(GameMode->AutoLoadPuzzleRelativeFilename);
+	}
+
+	PlannerWidget->AddToViewport();
+	FocusWidget(PlannerWidget);
+	if (bStartEditing)
+	{
+		SetBoardEditing(true);
+	}
+	return true;
+}
+
+bool AGatherAndHuntPuzzleHUD::SetBoardEditing(const bool bEditing)
+{
+	if (PlannerWidget == nullptr || BoardEditorWidget == nullptr || bEditing == bBoardEditing)
+	{
+		return false;
+	}
+	UGatherAndHuntPuzzleSession* const Session = UGatherAndHuntPuzzleBlueprintLibrary::GetPuzzleSession(this);
+
+	if (bEditing)
+	{
+		if (Planner->HasUnsavedScriptDraft())
+		{
+			PlannerWidget->ShowMessage(TEXT("Save or revert the script draft before editing the board."), true);
+			return false;
+		}
+		if (BoardView->IsPlayingBack())
+		{
+			BoardView->SkipPlayback();
+		}
+		bBoardEditing = true;
+		// Resets the session to turn 0; the editor always edits the starting layout.
+		BoardEditor->BindToSession(Session);
+		if (const AGatherAndHuntPuzzleGameMode* const GameMode = GetWorld()->GetAuthGameMode<AGatherAndHuntPuzzleGameMode>())
+		{
+			BoardEditorWidget->SetTargetFile(GameMode->AutoLoadPuzzleRelativeFilename);
+		}
+		BoardEditorWidget->Bind(Session, BoardEditor, BoardView);
+		BoardView->SetBoardEditor(BoardEditor);
+		PlannerWidget->RemoveFromParent();
+		BoardEditorWidget->AddToViewport();
+		FocusWidget(BoardEditorWidget);
+	}
+	else
+	{
+		bBoardEditing = false;
+		BoardView->SetBoardEditor(nullptr);
+		// The board may have changed under the planner's queued moves.
+		Planner->ClearAll();
+		Planner->RefreshFromSession();
+		BoardEditorWidget->RemoveFromParent();
+		PlannerWidget->AddToViewport();
+		PlannerWidget->Refresh();
+		FocusWidget(PlannerWidget);
+	}
+	return true;
+}
+
+void AGatherAndHuntPuzzleHUD::FocusWidget(UUserWidget* Widget)
+{
+	APlayerController* const PC = GetOwningPlayerController();
+	if (PC == nullptr || Widget == nullptr)
+	{
+		return;
+	}
 	FInputModeUIOnly InputMode;
-	InputMode.SetWidgetToFocus(PlannerWidget->TakeWidget());
+	InputMode.SetWidgetToFocus(Widget->TakeWidget());
 	InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
 	PC->SetInputMode(InputMode);
-	return true;
 }

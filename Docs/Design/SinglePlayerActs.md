@@ -4,6 +4,43 @@ This lays out a three-act structure for the planned post-v1 single-player mode i
 
 The goal is to teach the simulation cleanly in Act 1, force combination play in Act 2, and make simultaneous multi-turtle timing the real skill test in Act 3.
 
+## The designer's progression (2026-09-25)
+
+This is the plan. It follows the original prototype, whose quick difficulty curve
+and sense of progression are what to keep. The sections after it are an idea
+bank for puzzles within this structure, not a competing plan.
+
+- **Act 1: one ship.** A six-puzzle tutorial that hands out buttons one lesson
+  at a time, then several puzzles of increasing complexity, still with one ship.
+- **Act 2: several ships, one moving per turn** (`MaxTurtlesMovedPerTurn = 1`).
+- **Act 3: several ships moving at the same time.**
+
+### Act 1 tutorial
+
+All are *reach* puzzles (`Goal = Reach`): touching a ball wins, as it did in the
+prototype, where touching an objective scored. Buttons are the puzzle's
+`AllowedMoveMask`; Execute is the planner's submit.
+
+| # | File | Buttons | Grass | Lesson |
+|---|---|---|---|---|
+| 1 | `Act1/01_FirstSteps` | Forward | yes | A ball straight ahead: queue forward twice, Execute. |
+| 2 | `Act1/02_Turning` | + turn left / right | yes | The ball is close but not in a straight line. |
+| 3 | `Act1/03_Obstacle` | same | yes | A block in the way; hitting it destroys the ship (Reset and retry). Ball a little farther. |
+| 4 | `Act1/04_Gathering` | same | yes | Three balls and three blocks; long plans cost more, so it takes several turns. |
+| 5 | `Act1/05_UpHigh` | + up / down | yes | The ball is above the board. |
+| 6 | `Act1/06_TheChaser` | all (adds wait) | no | A chaser. It steps toward the ship every tick, and turning is a tick spent standing still, so turning next to it gets you caught. Turn away from it first. |
+
+Each has a verified solution in `GatherAndHunt.PuzzleRules.TutorialSolutions`,
+which also checks that the tempting wrong play fails in 3 and 6.
+
+Next: several one-ship puzzles of rising complexity (Act 1, from #7).
+
+### Act 2 so far
+
+`Act2/01_First` and `Act2/02_DuoShips` are the prototype's two-ship boards,
+converted to reach puzzles with one ship moving per turn and no turn limit. Their
+solutions haven't been checked yet.
+
 ## Structure
 
 - Act 1: teach local movement grammar and consequence chains.

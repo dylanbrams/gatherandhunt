@@ -1,13 +1,14 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
+// Fill out your copyright notice in the Description page of Project Settings.
 
 
 #include "ULevelSave.h"
 
 namespace
 {
-	// Marks a versioned manual trailer ("GAHS"). Version 2 added bScriptControlled.
+	// Marks a versioned manual trailer ("GAHS"). Version 2 added bScriptControlled;
+	// version 3 the puzzle rules (goal, allowed moves, ground, turtles per turn).
 	constexpr int32 TrailerMagic = 0x53484147;
-	constexpr int32 CurrentTrailerVersion = 2;
+	constexpr int32 CurrentTrailerVersion = 3;
 
 	// A count or string length read from a legacy or malformed file can be
 	// garbage; SetNum on it is fatal and a huge FString read logs a critical
@@ -227,8 +228,13 @@ void ULevelSave::Serialize(FArchive& Ar)
 			Ar << Data.HazardSecondaryStepCount;
 			Ar << Data.HazardPhaseOffset;
 			Ar << Data.bScriptControlled;
-			// Add new fields at the end, behind a CurrentTrailerVersion bump.
 		}
+		uint8 GoalAsByte = static_cast<uint8>(Goal);
+		Ar << GoalAsByte;
+		Ar << AllowedMoveMask;
+		Ar << bShowGround;
+		Ar << MaxTurtlesMovedPerTurn;
+		// Add new fields at the end, behind a CurrentTrailerVersion bump.
 	}
 	else if (Ar.IsLoading())
 	{
@@ -347,7 +353,18 @@ bool ULevelSave::LoadCurrentTrailer(FArchive& Ar, const bool bRequireEndOfArchiv
 			Ar << Data.bScriptControlled;
 		}
 	}
-	if (Ar.IsError() || (bRequireEndOfArchive && Ar.Tell() != Ar.TotalSize()))
+	uint8 InGoal = static_cast<uint8>(EGatherAndHuntPuzzleGoal::Deliver);
+	int32 InAllowedMoveMask = GatherAndHuntAllMovesMask;
+	bool bInShowGround = false;
+	int32 InMaxTurtlesMovedPerTurn = 0;
+	if (Version >= 3)
+	{
+		Ar << InGoal;
+		Ar << InAllowedMoveMask;
+		Ar << bInShowGround;
+		Ar << InMaxTurtlesMovedPerTurn;
+	}
+	if (Ar.IsError() || InGoal > static_cast<uint8>(EGatherAndHuntPuzzleGoal::Reach) || (bRequireEndOfArchive && Ar.Tell() != Ar.TotalSize()))
 	{
 		return false;
 	}
@@ -365,5 +382,9 @@ bool ULevelSave::LoadCurrentTrailer(FArchive& Ar, const bool bRequireEndOfArchiv
 	GridCellSize = InGridCellSize;
 	ScriptedOpponentTurns = MoveTemp(InScriptedOpponentTurns);
 	PieceSaveDataArray = MoveTemp(InPieces);
+	Goal = static_cast<EGatherAndHuntPuzzleGoal>(InGoal);
+	AllowedMoveMask = InAllowedMoveMask;
+	bShowGround = bInShowGround;
+	MaxTurtlesMovedPerTurn = InMaxTurtlesMovedPerTurn;
 	return true;
 }

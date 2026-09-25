@@ -6,16 +6,23 @@ all C++ (no Blueprint or map assets needed), so it works in any map that runs
 
 ## Launching
 
-Any map, with the GameMode and puzzle picked on the URL:
+The game starts on the C++ main menu (`AGatherAndHuntMenuGameMode` on the engine's
+empty `/Engine/Maps/Entry`, set as `GameDefaultMap` / `GlobalDefaultGameMode`). It
+lists the board files by act and order; **Play** opens the planner, **Edit board**
+opens the board editor, and **New puzzle** starts an empty board under a new file
+name. Every screen runs on the Entry map with its GameMode picked on the URL, so no
+map or Blueprint assets are involved (`UGatherAndHuntFrontEnd` does the travel).
+
+To skip the menu:
 
 ```
-UnrealEditor.exe GatherAndHunt.uproject "/Engine/Maps/Entry?game=/Script/GatherAndHunt.GatherAndHuntPuzzleGameMode?Puzzle=DuoShips" -game -windowed -ResX=1600 -ResY=900
+UnrealEditor.exe GatherAndHunt.uproject "/Engine/Maps/Entry?game=/Script/GatherAndHunt.GatherAndHuntPuzzleGameMode?Puzzle=Act1/01_FirstSteps" -game -windowed -ResX=1600 -ResY=900
 ```
 
-`?Puzzle=` is a path under `Content/BoardSetups` (the `.dat` is optional). You can
-also set the map's GameMode override in World Settings and use
-`AutoLoadPuzzleRelativeFilename`, or pick a file in the planner's dropdown and press
-**Load** at runtime.
+`?Puzzle=` is a path under `Content/BoardSetups` (the `.dat` is optional). Add
+`?Edit` to open in the board editor; with `?Edit`, a file that doesn't exist yet
+becomes a new empty board. You can also pick a file in the planner's dropdown and
+press **Load** at runtime.
 
 ## Turtle roles
 
@@ -39,8 +46,7 @@ controller. Together they give three roles (`EGatherAndHuntTurtleRole`):
 - `AGatherAndHuntPuzzleBoardView::GetRoleColor` is the one palette for pieces,
   paths and the planner UI.
 
-The legacy Blueprint level editor doesn't expose roles yet; its pieces load as
-Player (owner 0) or Opponent (owner 1).
+The board editor sets roles (see below).
 
 ## Controls
 
@@ -58,6 +64,7 @@ Player (owner 0) or Opponent (owner 1).
 | P | Toggle scripted turtles in the preview |
 | Enter | Submit turn (or skip playback); in script mode, save the scripted turn |
 | O | Toggle script mode (edit allies and opponents) |
+| B | Open the board editor |
 | Ctrl+S | Save the loaded board file |
 | Home | Reframe camera |
 | Mouse drag / wheel | Orbit / zoom |
@@ -95,6 +102,71 @@ opponents are validated with the same rules as a player's plan, each against its
 own team's budget; the budget bar shows the selected turtle's team. Saving
 rewrites an older board file in the current format.
 
+## Puzzle rules
+
+Each board file carries four rules (trailer version 3; older files get the
+defaults in brackets):
+
+- **Goal** [deliver]: *deliver* counts an objective once it's carried off the
+  board edge; *reach* counts it on touch.
+- **Player moves** [all]: which move buttons the player gets. Unavailable
+  buttons are hidden and their keys ignored; the session also refuses them.
+  Scripted turtles aren't limited.
+- **Grass** [off]: a green field under the board.
+- **Ships moved per turn** [no limit]: how many player turtles may have moves
+  in one turn.
+
+The board editor's Puzzle panel edits all four.
+
+## Editing the board
+
+Press **B** (or **Edit board**) to switch from planning to editing the puzzle's
+starting layout, and **B** again to go back and play it. The board editor replaces
+the legacy Blueprint level editor. Every edit goes to the session straight away,
+so switching back plays exactly what would be saved. Entering the editor restarts
+the puzzle at turn 0, and is refused while the planner has an unsaved script draft.
+
+A yellow wire cube marks the cursor cell; the piece in that cell is the selection.
+A faint outline shows the cursor's layer, with a drop line to the floor when it's
+above it. Moving hazards draw their whole cycle in orange.
+
+| Key | Action |
+|---|---|
+| W/A/S/D, arrows | Move the cursor (relative to the camera) |
+| Q / E | Layer down / up |
+| Shift + any of the above | Carry the selected piece along |
+| 1-7 | Place turtle, objective, gold objective, block, hunter, patrol hazard, loop hazard |
+| Delete / Backspace | Remove the selected piece |
+| R / Shift+R | Rotate right / left (turtles and moving hazards) |
+| T / G | Pitch a turtle up / down |
+| C | Cycle a turtle's role: player, ally, opponent |
+| Ctrl+Z / Ctrl+Y | Undo / redo |
+| Ctrl+S | Save |
+| B | Back to the planner |
+| Click | Put the cursor on the clicked piece, or the clicked cell on the cursor's layer |
+
+The panels cover the rest:
+
+- **Puzzle**: name, file, target score, turns and objectives (0 means no
+  target), act and order (the menu sorts by these), board size in cells, intro
+  text. Shrinking the board is refused while a piece sits in the row being removed.
+- **Cursor**: the selected piece, with role buttons for turtles and length /
+  width / stride / phase steppers for moving hazards. A patrol walks *length*
+  steps along its facing and back; a loop walks *width* steps to its right, then
+  *length* along its facing, and back round. *Stride* is cells per step; *phase*
+  is how far into its cycle the hazard starts.
+- **Issues**: the level editor library's checks plus pieces sharing a cell, no
+  player turtle (errors), and hazard paths that leave the board (a warning).
+
+Save writes the file named in **File** (spaces become underscores; `.dat` is
+added). Saving over a different existing puzzle takes a second press, and so
+does **New** or **Main menu** with unsaved changes. You can save with errors
+still listed. The message says how many, and the puzzle won't play until
+they're fixed.
+
+Deleting a turtle, or making one the player's, removes its moves from the
+scripted turns.
+
 ## What the preview shows
 
 The preview runs the same `turtlesim::ResolveTurn` the session uses on submit,
@@ -115,8 +187,12 @@ preview are exact, not estimates.
 | `turtlesim::ExtractTurtleTrack` (`TurtleSim/PlanPreview.h`) | Per-turtle path from a resolved turn. Pure C++, tested in the CMake suite. |
 | `UGatherAndHuntTurnPlanner` | Editable plan: queues, selection, reorder, cost, validation, preview, submit, script authoring. Blueprint-callable. |
 | `UGatherAndHuntPlannerWidget` | UMG widget, tree built in C++. A UMG Blueprint subclass can supply its own tree. |
-| `AGatherAndHuntPuzzleBoardView` | Placeholder piece actors, playback, ghost paths, orbit camera, fallback lighting, role palette. Place one in a level to reuse it, otherwise the HUD spawns one. |
-| `AGatherAndHuntPuzzleHUD` | Default HUD for the puzzle GameMode; wires the above together. |
+| `AGatherAndHuntPuzzleBoardView` | Placeholder piece actors, playback, ghost paths, board editor overlay and picking, orbit camera, fallback lighting, role palette. Place one in a level to reuse it, otherwise the HUD spawns one. |
+| `UGatherAndHuntBoardEditor` | Board editing model: cursor, place / move / rotate / delete, roles, hazard parameters, metadata, board size, validation, undo. Works in grid cells; converts to the board file's world units. Blueprint-callable. |
+| `UGatherAndHuntBoardEditorWidget` | Board editor UMG widget, tree built in C++. |
+| `AGatherAndHuntPuzzleHUD` | Default HUD for the puzzle GameMode; wires the above together and switches between planning and editing. |
+| `UGatherAndHuntMainMenuWidget`, `AGatherAndHuntMenuHUD`, `AGatherAndHuntMenuGameMode` | Main menu and puzzle select. |
+| `UGatherAndHuntFrontEnd` | Puzzle listing, filename normalising, travel to the menu / a puzzle. |
 
 ## Board files
 
@@ -136,7 +212,7 @@ keeps a version 1 file in that set.
 
 ## Not done yet
 
-- Role editing in the legacy Blueprint level editor (the C++ helpers exist).
 - Multiplayer: the planner binds to a puzzle session. `TurtleGame` needs an adapter
   that feeds it the replicated board and submits through `ServerSubmitTurnPlan`.
+  The turn loop it would plug into is described in `MultiplayerTurnLoop.md`.
 - Real art: pieces are engine basic shapes.

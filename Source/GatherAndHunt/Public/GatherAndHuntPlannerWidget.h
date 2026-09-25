@@ -46,7 +46,7 @@ public:
 // C clear turtle (Shift+C all), P toggle scripted preview, Home reframe,
 // Enter submit (or skip playback). Drag with either mouse button to orbit, wheel to zoom.
 // Authoring: O toggles editing the script (allies + opponents; Enter saves the turn),
-// Ctrl+S writes the board file.
+// Ctrl+S writes the board file, B opens the board editor.
 UCLASS()
 class GATHERANDHUNT_API UGatherAndHuntPlannerWidget : public UUserWidget
 {
@@ -61,8 +61,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "GatherAndHunt|Planner")
 	void Refresh();
 
+	UFUNCTION(BlueprintCallable, Category = "GatherAndHunt|Planner")
+	void ShowMessage(const FString& Message, bool bIsError);
+
 protected:
 	virtual TSharedRef<SWidget> RebuildWidget() override;
+	virtual void NativeConstruct() override;
 	virtual FReply NativeOnKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent) override;
 	virtual FReply NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
 	virtual FReply NativeOnMouseButtonUp(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
@@ -91,7 +95,8 @@ private:
 	void LoadSelectedPuzzle();
 	void ResetPuzzle();
 	void SavePuzzleFile();
-	void ShowMessage(const FString& Message, bool bIsError);
+	void EditBoard();
+	void BackToMenu();
 	FString GetLoadedPuzzleFile() const;
 
 	UFUNCTION()
@@ -131,6 +136,9 @@ private:
 	UPROPERTY(Transient) TObjectPtr<UTextBlock> SideLabel;
 	UPROPERTY(Transient) TObjectPtr<UTextBlock> MessageText;
 
+	// One per move kind; payload is the kind. Hidden when the puzzle doesn't allow it.
+	UPROPERTY(Transient) TArray<TObjectPtr<UGatherAndHuntPlannerButton>> MoveButtons;
+
 	// Move chips in the queue strip, in move order (rebuilt on every refresh).
 	UPROPERTY(Transient) TArray<TObjectPtr<UBorder>> QueueChips;
 
@@ -138,6 +146,7 @@ private:
 	int32 FindDropIndex(const FVector2D& ScreenPosition) const;
 
 	bool bOrbiting = false;
+	bool bMenuConfirmPending = false;
 
 	// Chip press / drag-to-reorder state. PressedChipIndex follows the dragged
 	// move as it is reordered.

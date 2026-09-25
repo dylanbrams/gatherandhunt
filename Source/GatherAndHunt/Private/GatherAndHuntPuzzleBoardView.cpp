@@ -8,6 +8,7 @@
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
 #include "GameFramework/SpringArmComponent.h"
+#include "GatherAndHuntBoardEditor.h"
 #include "GatherAndHuntPuzzlePieceActor.h"
 #include "GatherAndHuntPuzzlePlaybackComponent.h"
 #include "GatherAndHuntPuzzleSession.h"
@@ -27,6 +28,10 @@ namespace
 	const FLinearColor HazardColor(1.0f, 0.45f, 0.0f);
 	const FLinearColor HunterColor(0.9f, 0.05f, 0.05f);
 	const FLinearColor ObjectiveColor(1.0f, 0.8f, 0.0f);
+	const FLinearColor GrassColor(0.12f, 0.38f, 0.08f);
+
+	// How far the grass field reaches past the board, in cells.
+	constexpr float GroundMarginCells = 30.0f;
 
 	// Obstacle kinds as reported in FGatherAndHuntPuzzleObstacleState::ObstacleKind.
 	constexpr int32 ObstacleKindWandering = 1;
@@ -87,6 +92,10 @@ AGatherAndHuntPuzzleBoardView::AGatherAndHuntPuzzleBoardView()
 	DangerMarkerMesh = CreateOverlayMesh(TEXT("DangerMarkerMesh"), SphereMesh);
 	DeliverMarkerMesh = CreateOverlayMesh(TEXT("DeliverMarkerMesh"), SphereMesh);
 	ClaimMarkerMesh = CreateOverlayMesh(TEXT("ClaimMarkerMesh"), SphereMesh);
+	EditorCursorMesh = CreateOverlayMesh(TEXT("EditorCursorMesh"), CubeMesh);
+	EditorLayerMesh = CreateOverlayMesh(TEXT("EditorLayerMesh"), CubeMesh);
+	HazardPathMesh = CreateOverlayMesh(TEXT("HazardPathMesh"), CubeMesh);
+	GroundMesh = CreateOverlayMesh(TEXT("GroundMesh"), CubeMesh);
 }
 
 UInstancedStaticMeshComponent* AGatherAndHuntPuzzleBoardView::CreateOverlayMesh(const TCHAR* Name, UStaticMesh* Mesh)
@@ -136,6 +145,10 @@ void AGatherAndHuntPuzzleBoardView::Bind(UGatherAndHuntPuzzleSession* InSession,
 	TintOverlay(DangerMarkerMesh, FLinearColor(1.0f, 0.0f, 0.0f));
 	TintOverlay(DeliverMarkerMesh, FLinearColor(0.1f, 1.0f, 0.2f));
 	TintOverlay(ClaimMarkerMesh, ObjectiveColor);
+	TintOverlay(EditorCursorMesh, FLinearColor(1.0f, 1.0f, 0.6f));
+	TintOverlay(EditorLayerMesh, FLinearColor(0.45f, 0.45f, 0.2f));
+	TintOverlay(HazardPathMesh, HazardColor);
+	TintOverlay(GroundMesh, GrassColor);
 
 	EnsureLighting();
 	RebuildBoard();
@@ -184,10 +197,11 @@ void AGatherAndHuntPuzzleBoardView::ClearPieces()
 	Pieces.Reset();
 }
 
-void AGatherAndHuntPuzzleBoardView::RebuildBoard()
+void AGatherAndHuntPuzzleBoardView::RebuildBoard(const bool bReframe)
 {
 	ClearPieces();
 	BoundsMesh->ClearInstances();
+	GroundMesh->ClearInstances();
 
 	if (Session == nullptr || !Session->IsPuzzleLoaded())
 	{
@@ -253,7 +267,14 @@ void AGatherAndHuntPuzzleBoardView::RebuildBoard()
 
 	Playback->ApplyBoardSnapshotInstant(Snapshot);
 	DrawBounds();
-	FrameBoard();
+	if (Session->ShowsGround())
+	{
+		DrawGround(Snapshot.GridSize);
+	}
+	if (bReframe || Snapshot.GridSize != FramedGridSize)
+	{
+		FrameBoard();
+	}
 	RedrawPreview();
 }
 
@@ -294,6 +315,18 @@ void AGatherAndHuntPuzzleBoardView::DrawBounds()
 	}
 }
 
+void AGatherAndHuntPuzzleBoardView::DrawGround(const FIntVector& Size)
+{
+	// A flat slab just under the bottom layer, reaching well past the board.
+	const float Half = CellSize * 0.5f;
+	const FVector Min = GridToWorld(FIntVector::ZeroValue) - FVector(Half);
+	const FVector Max = GridToWorld(Size - FIntVector(1)) + FVector(Half);
+	const float Thickness = CellSize * 0.1f;
+	const FVector Center((Min.X + Max.X) * 0.5f, (Min.Y + Max.Y) * 0.5f, Min.Z - Thickness * 0.5f - CellSize * 0.02f);
+	const FVector Extent = (FVector(Max.X - Min.X, Max.Y - Min.Y, 0.0f) + FVector(2.0f * GroundMarginCells * CellSize));
+	GroundMesh->AddInstance(FTransform(FRotator::ZeroRotator, Center, FVector(Extent.X, Extent.Y, Thickness) / BasicShapeSize), true);
+}
+
 void AGatherAndHuntPuzzleBoardView::RedrawPreview()
 {
 	SelectedPathMesh->ClearInstances();
@@ -303,7 +336,15 @@ void AGatherAndHuntPuzzleBoardView::RedrawPreview()
 	DangerMarkerMesh->ClearInstances();
 	DeliverMarkerMesh->ClearInstances();
 	ClaimMarkerMesh->ClearInstances();
+	EditorCursorMesh->ClearInstances();
+	EditorLayerMesh->ClearInstances();
+	HazardPathMesh->ClearInstances();
 
+	if (BoardEditor != nullptr)
+	{
+		DrawEditorOverlay();
+		return;
+	}
 	if (Planner == nullptr || !Planner->HasBoard() || IsPlayingBack())
 	{
 		return;
@@ -420,6 +461,7 @@ void AGatherAndHuntPuzzleBoardView::FrameBoard()
 		return;
 	}
 	const FIntVector Size = Session->GetCurrentBoardSnapshot().GridSize;
+	FramedGridSize = Size;
 	const FVector Center = (GridToWorld(FIntVector::ZeroValue) + GridToWorld(Size - FIntVector(1))) * 0.5f;
 	CameraArm->SetWorldLocation(Center);
 	CameraArm->TargetArmLength = FVector(Size).Size() * CellSize * 1.4f;
@@ -479,4 +521,147 @@ void AGatherAndHuntPuzzleBoardView::HandlePlaybackFinished()
 {
 	RedrawPreview();
 	OnPlaybackFinished.Broadcast();
+}
+
+// --- Board editor -------------------------------------------------------------
+
+void AGatherAndHuntPuzzleBoardView::SetBoardEditor(UGatherAndHuntBoardEditor* InBoardEditor)
+{
+	if (BoardEditor != nullptr)
+	{
+		BoardEditor->OnChanged.RemoveDynamic(this, &AGatherAndHuntPuzzleBoardView::HandleBoardEditorChanged);
+	}
+	BoardEditor = InBoardEditor;
+	if (BoardEditor != nullptr)
+	{
+		BoardEditor->OnChanged.AddDynamic(this, &AGatherAndHuntPuzzleBoardView::HandleBoardEditorChanged);
+	}
+	RebuildBoard(false);
+}
+
+void AGatherAndHuntPuzzleBoardView::HandleBoardEditorChanged(const bool bBoardChanged)
+{
+	if (bBoardChanged)
+	{
+		RebuildBoard(false); // Redraws the overlay too.
+	}
+	else
+	{
+		RedrawPreview();
+	}
+}
+
+void AGatherAndHuntPuzzleBoardView::DrawEditorOverlay()
+{
+	if (!BoardEditor->HasPuzzle())
+	{
+		return;
+	}
+	const FIntVector Count = BoardEditor->GetCellCount();
+	const FIntVector Cursor = BoardEditor->GetCursor();
+	const float Half = CellSize * 0.5f;
+
+	// Wire cube around the cursor cell.
+	{
+		const FVector Center = GridToWorld(Cursor);
+		const float Extent = Half * 0.98f;
+		FVector Corners[8];
+		for (int32 Index = 0; Index < 8; ++Index)
+		{
+			Corners[Index] = Center + FVector((Index & 1) ? Extent : -Extent, (Index & 2) ? Extent : -Extent, (Index & 4) ? Extent : -Extent);
+		}
+		const int32 Edges[12][2] = {{0, 1}, {2, 3}, {4, 5}, {6, 7}, {0, 2}, {1, 3}, {4, 6}, {5, 7}, {0, 4}, {1, 5}, {2, 6}, {3, 7}};
+		for (const auto& Edge : Edges)
+		{
+			AddBar(EditorCursorMesh, Corners[Edge[0]], Corners[Edge[1]], CellSize * 0.05f);
+		}
+	}
+
+	// Outline of the layer the cursor is on, and a drop line to the floor, so
+	// the cursor's height reads from any angle.
+	{
+		const FVector Min = GridToWorld(FIntVector(0, 0, Cursor.Z)) - FVector(Half, Half, 0.0f);
+		const FVector Max = GridToWorld(FIntVector(Count.X - 1, Count.Y - 1, Cursor.Z)) + FVector(Half, Half, 0.0f);
+		const float Thickness = CellSize * 0.03f;
+		AddBar(EditorLayerMesh, FVector(Min.X, Min.Y, Min.Z), FVector(Max.X, Min.Y, Min.Z), Thickness);
+		AddBar(EditorLayerMesh, FVector(Max.X, Min.Y, Min.Z), FVector(Max.X, Max.Y, Min.Z), Thickness);
+		AddBar(EditorLayerMesh, FVector(Max.X, Max.Y, Min.Z), FVector(Min.X, Max.Y, Min.Z), Thickness);
+		AddBar(EditorLayerMesh, FVector(Min.X, Max.Y, Min.Z), FVector(Min.X, Min.Y, Min.Z), Thickness);
+		if (Cursor.Z > 0)
+		{
+			const FVector Floor = GridToWorld(FIntVector(Cursor.X, Cursor.Y, 0)) - FVector(0.0f, 0.0f, Half);
+			AddBar(EditorLayerMesh, Floor, GridToWorld(Cursor) - FVector(0.0f, 0.0f, Half), Thickness);
+		}
+	}
+
+	// Every moving hazard's cycle, thicker for the selected one.
+	FGatherAndHuntBoardEditorPiece Selected;
+	const int32 SelectedId = BoardEditor->GetSelectedPiece(Selected) ? Selected.PieceId : INDEX_NONE;
+	for (const FGatherAndHuntBoardEditorPiece& Piece : BoardEditor->GetPieces())
+	{
+		if (!UGatherAndHuntBoardEditor::IsMovingHazard(Piece.Kind))
+		{
+			continue;
+		}
+		const TArray<FIntVector> Path = BoardEditor->GetHazardPath(Piece.PieceId);
+		const float Thickness = CellSize * (Piece.PieceId == SelectedId ? 0.08f : 0.04f);
+		for (int32 Index = 1; Index < Path.Num(); ++Index)
+		{
+			AddBar(HazardPathMesh, GridToWorld(Path[Index - 1]), GridToWorld(Path[Index]), Thickness);
+			AddCube(HazardPathMesh, GridToWorld(Path[Index]), Thickness * 1.8f);
+		}
+	}
+}
+
+bool AGatherAndHuntPuzzleBoardView::PickEditorCell(const FVector& RayOrigin, const FVector& RayDirection, FIntVector& OutCell) const
+{
+	if (BoardEditor == nullptr || !BoardEditor->HasPuzzle() || RayDirection.IsNearlyZero())
+	{
+		return false;
+	}
+	const FVector Direction = RayDirection.GetSafeNormal();
+
+	// Nearest piece the ray passes close to the centre of.
+	float BestDistance = TNumericLimits<float>::Max();
+	for (const FGatherAndHuntBoardEditorPiece& Piece : BoardEditor->GetPieces())
+	{
+		const FVector Center = GridToWorld(Piece.Cell);
+		const float Along = FVector::DotProduct(Center - RayOrigin, Direction);
+		if (Along > 0.0f && Along < BestDistance
+			&& FVector::DistSquared(RayOrigin + Direction * Along, Center) <= FMath::Square(CellSize * 0.45f))
+		{
+			BestDistance = Along;
+			OutCell = Piece.Cell;
+		}
+	}
+	if (BestDistance < TNumericLimits<float>::Max())
+	{
+		return true;
+	}
+
+	// Otherwise the cell where the ray crosses the cursor's layer.
+	const float LayerZ = GridToWorld(BoardEditor->GetCursor()).Z;
+	if (FMath::IsNearlyZero(Direction.Z))
+	{
+		return false;
+	}
+	const float T = (LayerZ - RayOrigin.Z) / Direction.Z;
+	if (T <= 0.0f)
+	{
+		return false;
+	}
+	const FVector Hit = RayOrigin + Direction * T;
+	const FIntVector Cell(FMath::RoundToInt(Hit.X / CellSize), FMath::RoundToInt(Hit.Y / CellSize), BoardEditor->GetCursor().Z);
+	const FIntVector Count = BoardEditor->GetCellCount();
+	if (Cell.X < 0 || Cell.Y < 0 || Cell.X >= Count.X || Cell.Y >= Count.Y)
+	{
+		return false;
+	}
+	OutCell = Cell;
+	return true;
+}
+
+float AGatherAndHuntPuzzleBoardView::GetCameraYaw() const
+{
+	return CameraArm->GetRelativeRotation().Yaw;
 }

@@ -16,7 +16,8 @@ class GATHERANDHUNT_API AGatherAndHuntPuzzleGameMode : public AGameModeBase
 public:
 	AGatherAndHuntPuzzleGameMode();
 
-	// Accepts "?Puzzle=<file under Content/BoardSetups>" to override AutoLoadPuzzleRelativeFilename.
+	// Accepts "?Puzzle=<file under Content/BoardSetups>" to override
+	// AutoLoadPuzzleRelativeFilename, and "?Edit" to open in the board editor.
 	virtual void InitGame(const FString& MapName, const FString& Options, FString& ErrorMessage) override;
 	virtual void BeginPlay() override;
 
@@ -37,6 +38,11 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GatherAndHunt|Puzzle")
 	bool bAutoLoadPuzzleOnBeginPlay = true;
+
+	// The HUD opens the board editor instead of the planner. If the puzzle file
+	// doesn't exist yet it starts as a new, empty board.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GatherAndHunt|Puzzle")
+	bool bStartInBoardEditor = false;
 
 private:
 	void RefreshGameStateFromSession();

@@ -67,6 +67,27 @@ public:
 	UFUNCTION(BlueprintPure, Category = "GatherAndHunt|Puzzle")
 	FGatherAndHuntPuzzleTurnResultView GetLastTurnResultView() const;
 
+	// --- Puzzle rules (see ULevelSave) ---
+	UFUNCTION(BlueprintPure, Category = "GatherAndHunt|Puzzle")
+	EGatherAndHuntPuzzleGoal GetGoal() const { return LoadedLevelSave != nullptr ? LoadedLevelSave->Goal : EGatherAndHuntPuzzleGoal::Deliver; }
+
+	UFUNCTION(BlueprintPure, Category = "GatherAndHunt|Puzzle")
+	int32 GetAllowedMoveMask() const { return LoadedLevelSave != nullptr ? LoadedLevelSave->AllowedMoveMask : GatherAndHuntAllMovesMask; }
+
+	UFUNCTION(BlueprintPure, Category = "GatherAndHunt|Puzzle")
+	bool IsMoveAllowed(EGatherAndHuntPuzzleMoveKind MoveKind) const { return IsGatherAndHuntMoveAllowed(GetAllowedMoveMask(), MoveKind); }
+
+	UFUNCTION(BlueprintPure, Category = "GatherAndHunt|Puzzle")
+	bool ShowsGround() const { return LoadedLevelSave != nullptr && LoadedLevelSave->bShowGround; }
+
+	UFUNCTION(BlueprintPure, Category = "GatherAndHunt|Puzzle")
+	int32 GetMaxTurtlesMovedPerTurn() const { return LoadedLevelSave != nullptr ? LoadedLevelSave->MaxTurtlesMovedPerTurn : 0; }
+
+	// Checks a player plan against the puzzle's rules (allowed moves, turtles
+	// per turn). The sim's own checks (budget, ownership, pitch) are separate.
+	UFUNCTION(BlueprintPure, Category = "GatherAndHunt|Puzzle")
+	FGatherAndHuntPuzzlePlanValidation CheckPuzzleRules(const FGatherAndHuntPuzzleTurnPlan& PlayerPlan) const;
+
 	// Player, Ally or Opponent. Unknown ids report Player.
 	UFUNCTION(BlueprintPure, Category = "GatherAndHunt|Puzzle")
 	EGatherAndHuntTurtleRole GetTurtleRole(int32 TurtleId) const;
@@ -89,9 +110,21 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "GatherAndHunt|Puzzle|Authoring")
 	bool SavePuzzleToProjectFile(const FString& RelativeFilename);
 
-	// True when scripted turns changed since the puzzle was loaded or saved.
+	// True when the puzzle changed since it was loaded or saved.
 	UFUNCTION(BlueprintPure, Category = "GatherAndHunt|Puzzle|Authoring")
 	bool HasUnsavedChanges() const { return bHasUnsavedChanges; }
+
+	// Replaces the puzzle with an edited copy of it (layout, metadata, scripts),
+	// restarting at turn 0 and marking the puzzle unsaved. The session keeps its
+	// own copy.
+	UFUNCTION(BlueprintCallable, Category = "GatherAndHunt|Puzzle|Authoring")
+	bool ApplyAuthoredLevelSave(ULevelSave* LevelSave);
+
+	// The loaded puzzle as authored. Edit a copy and hand it to ApplyAuthoredLevelSave.
+	const ULevelSave* GetLevelSave() const { return LoadedLevelSave; }
+
+	// Board-file rotation to sim facing. A vertical facing takes its heading from the yaw.
+	static turtlesim::Orientation ConvertWorldRotationToOrientation(const FRotator& Rotation);
 
 	// C++ access for tools that run the resolver locally (e.g. the turn planner's preview).
 	const turtlesim::BoardState* GetCurrentBoardState() const { return bHasCurrentBoardState ? &CurrentBoardState : nullptr; }
@@ -110,7 +143,6 @@ private:
 	static EGatherAndHuntPuzzleEventType ToPuzzleEventType(turtlesim::EEventType EventType);
 	FGatherAndHuntPuzzleBoardSnapshot BuildBoardSnapshot(const turtlesim::BoardState& BoardState) const;
 	FGatherAndHuntPuzzleTurnResultView BuildTurnResultView(const turtlesim::TurnResult& TurnResult) const;
-	static turtlesim::Orientation ConvertWorldRotationToOrientation(const FRotator& Rotation);
 	static turtlesim::IntVec3 ConvertWorldPositionToGridPosition(const FVector& Position, float GridCellSize);
 	static int32 ConvertHazardStepDistanceToCells(float HazardStepDistance, float GridCellSize);
 

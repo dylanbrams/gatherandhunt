@@ -14,6 +14,22 @@ enum class EGatherAndHuntPuzzleMoveKind : uint8
 	Wait
 };
 
+// Bit (1 << MoveKind) per move the player may use in a puzzle.
+constexpr int32 GatherAndHuntAllMovesMask = 0x3F;
+
+inline bool IsGatherAndHuntMoveAllowed(const int32 AllowedMoveMask, const EGatherAndHuntPuzzleMoveKind MoveKind)
+{
+	return (AllowedMoveMask & (1 << static_cast<int32>(MoveKind))) != 0;
+}
+
+// What wins a puzzle's objective targets.
+UENUM(BlueprintType)
+enum class EGatherAndHuntPuzzleGoal : uint8
+{
+	Deliver,  // Claim objectives and carry them off the board edge (the full rules).
+	Reach     // Touching an objective is enough (the early tutorial puzzles).
+};
+
 // Who a turtle belongs to and who drives it. Team (sim Owner) decides scoring;
 // control decides whether the player plans it or a puzzle script does.
 UENUM(BlueprintType)

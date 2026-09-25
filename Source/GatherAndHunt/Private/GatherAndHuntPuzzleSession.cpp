@@ -157,6 +157,12 @@ bool UGatherAndHuntPuzzleSession::SubmitSoloTurnPlan(
 		}
 	}
 
+	OutValidation = CheckPuzzleRules(TurnPlan);
+	if (!OutValidation.bIsValid)
+	{
+		return false;
+	}
+
 	turtlesim::TurnPlan PlayerPlan = ConvertTurnPlan(TurnPlan);
 	const turtlesim::PlanValidation Validation = turtlesim::ValidateTurnPlan(
 		CurrentBoardState,
@@ -182,6 +188,44 @@ bool UGatherAndHuntPuzzleSession::SubmitSoloTurnPlan(
 	bHasLastTurnResult = true;
 	EvaluateOutcome();
 	return true;
+}
+
+FGatherAndHuntPuzzlePlanValidation UGatherAndHuntPuzzleSession::CheckPuzzleRules(const FGatherAndHuntPuzzleTurnPlan& PlayerPlan) const
+{
+	FGatherAndHuntPuzzlePlanValidation Result;
+	Result.bIsValid = true;
+
+	int32 TurtlesMoved = 0;
+	for (const FGatherAndHuntPuzzleTurtlePlan& TurtlePlan : PlayerPlan.TurtlePlans)
+	{
+		if (TurtlePlan.Moves.Num() == 0)
+		{
+			continue;
+		}
+		++TurtlesMoved;
+		for (int32 Index = 0; Index < TurtlePlan.Moves.Num(); ++Index)
+		{
+			if (!IsMoveAllowed(TurtlePlan.Moves[Index]))
+			{
+				Result.bIsValid = false;
+				Result.ErrorMessage = TEXT("That move isn't available in this puzzle.");
+				Result.OffendingTurtleId = TurtlePlan.TurtleId;
+				Result.OffendingMoveIndex = Index;
+				return Result;
+			}
+		}
+		const int32 MaxTurtles = GetMaxTurtlesMovedPerTurn();
+		if (MaxTurtles > 0 && TurtlesMoved > MaxTurtles)
+		{
+			Result.bIsValid = false;
+			Result.ErrorMessage = MaxTurtles == 1
+				? FString(TEXT("Only one ship can move each turn."))
+				: FString::Printf(TEXT("Only %d ships can move each turn."), MaxTurtles);
+			Result.OffendingTurtleId = TurtlePlan.TurtleId;
+			return Result;
+		}
+	}
+	return Result;
 }
 
 void UGatherAndHuntPuzzleSession::BuildScriptedPlansForCurrentTurn(turtlesim::TurnPlan& OutAllyPlan, turtlesim::TurnPlan& OutOpponentPlan) const
@@ -283,6 +327,16 @@ bool UGatherAndHuntPuzzleSession::SavePuzzleToProjectFile(const FString& Relativ
 		return false;
 	}
 	bHasUnsavedChanges = false;
+	return true;
+}
+
+bool UGatherAndHuntPuzzleSession::ApplyAuthoredLevelSave(ULevelSave* LevelSave)
+{
+	if (!LoadPuzzleFromLevelSave(LevelSave))
+	{
+		return false;
+	}
+	bHasUnsavedChanges = true;
 	return true;
 }
 
@@ -613,10 +667,12 @@ turtlesim::Orientation UGatherAndHuntPuzzleSession::ConvertWorldRotationToOrient
 	const float AbsX = FMath::Abs(Forward.X);
 	const float AbsY = FMath::Abs(Forward.Y);
 	const float AbsZ = FMath::Abs(Forward.Z);
-	const turtlesim::EHeading Heading = HeadingFromHorizontalVector(FRotationMatrix(Rotation).GetScaledAxis(EAxis::X));
 
 	if (AbsZ > AbsX && AbsZ > AbsY)
 	{
+		// Pointing straight up or down the forward vector has no horizontal part
+		// to read a heading from; the yaw still says which way the turtle faces.
+		const turtlesim::EHeading Heading = HeadingFromHorizontalVector(FRotator(0.0f, Rotation.Yaw, 0.0f).Vector());
 		return turtlesim::Orientation(Heading, Forward.Z >= 0.0f ? turtlesim::EPitch::Up : turtlesim::EPitch::Down);
 	}
 
@@ -671,14 +727,17 @@ void UGatherAndHuntPuzzleSession::EvaluateOutcome()
 		}
 	}
 
+	// Deliver: a claimed objective only counts once nobody is still carrying it.
+	// Reach: touching it is enough.
+	const bool bClaimsSettled = LoadedLevelSave->Goal == EGatherAndHuntPuzzleGoal::Reach || !bHasLiveCarrier;
 	const bool bTargetScoreReached = LoadedLevelSave->TargetScore > 0
 		&& CurrentBoardState.ScorePlayer0 >= LoadedLevelSave->TargetScore;
 	const bool bTargetObjectivesReached = LoadedLevelSave->TargetObjectiveCount > 0
 		&& ClaimedObjectives >= LoadedLevelSave->TargetObjectiveCount
-		&& !bHasLiveCarrier;
+		&& bClaimsSettled;
 	const bool bAllObjectivesResolved = !CurrentBoardState.Objectives.empty()
 		&& ClaimedObjectives == static_cast<int32>(CurrentBoardState.Objectives.size())
-		&& !bHasLiveCarrier;
+		&& bClaimsSettled;
 
 	if (bTargetScoreReached || bTargetObjectivesReached || bAllObjectivesResolved)
 	{
