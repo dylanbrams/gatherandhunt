@@ -1,5 +1,6 @@
 #include "GatherAndHuntPuzzleGameMode.h"
 
+#include "GatherAndHuntCampaign.h"
 #include "GatherAndHuntPuzzleGameState.h"
 #include "GatherAndHuntPuzzleHUD.h"
 #include "GatherAndHuntPuzzleSession.h"
@@ -25,6 +26,13 @@ void AGatherAndHuntPuzzleGameMode::InitGame(const FString& MapName, const FStrin
 	if (UGameplayStatics::HasOption(Options, TEXT("Edit")))
 	{
 		bStartInBoardEditor = true;
+	}
+	CampaignNodeId = UGameplayStatics::ParseOption(Options, TEXT("CampaignNode"));
+	if (!CampaignNodeId.IsEmpty())
+	{
+		FString Error;
+		const UGatherAndHuntCampaign* const Campaign = UGatherAndHuntCampaign::Load(this, Error);
+		bAuthoringToolsAvailable = Campaign != nullptr && Campaign->IsNodeCompleted(0);
 	}
 }
 
@@ -53,6 +61,18 @@ bool AGatherAndHuntPuzzleGameMode::LoadPuzzleFromRelativeFilename(const FString&
 	return bLoaded;
 }
 
+bool AGatherAndHuntPuzzleGameMode::LoadPuzzleFromLevelSave(ULevelSave* LevelSave)
+{
+	if (PuzzleSession == nullptr)
+	{
+		PuzzleSession = NewObject<UGatherAndHuntPuzzleSession>(this);
+	}
+
+	const bool bLoaded = PuzzleSession->LoadPuzzleFromLevelSave(LevelSave);
+	RefreshGameStateFromSession();
+	return bLoaded;
+}
+
 bool AGatherAndHuntPuzzleGameMode::SubmitSoloTurnPlan(
 	const FGatherAndHuntPuzzleTurnPlan& TurnPlan,
 	FGatherAndHuntPuzzlePlanValidation& OutValidation)
@@ -67,7 +87,32 @@ bool AGatherAndHuntPuzzleGameMode::SubmitSoloTurnPlan(
 
 	const bool bAccepted = PuzzleSession->SubmitSoloTurnPlan(TurnPlan, OutValidation);
 	RefreshGameStateFromSession();
+	if (bAccepted && PuzzleSession->GetOutcome() == EGatherAndHuntPuzzleOutcome::Victory)
+	{
+		RecordCampaignWin();
+	}
 	return bAccepted;
+}
+
+void AGatherAndHuntPuzzleGameMode::RecordCampaignWin()
+{
+	if (CampaignNodeId.IsEmpty())
+	{
+		return;
+	}
+	FString Error;
+	UGatherAndHuntCampaign* const Campaign = UGatherAndHuntCampaign::Load(this, Error);
+	if (Campaign == nullptr)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Campaign win for \"%s\" not recorded: %s"), *CampaignNodeId, *Error);
+		return;
+	}
+	// A replayed level is already recorded and earns nothing new.
+	if (Campaign->CompleteNode(CampaignNodeId))
+	{
+		CampaignRewardText = UGatherAndHuntCampaign::DescribeReward(Campaign->GetNodes()[Campaign->FindNodeIndex(CampaignNodeId)].Reward);
+	}
+	bAuthoringToolsAvailable = Campaign->IsNodeCompleted(0);
 }
 
 bool AGatherAndHuntPuzzleGameMode::ResetPuzzle()

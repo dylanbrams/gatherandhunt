@@ -23,14 +23,14 @@ prototype, where touching an objective scored. Buttons are the puzzle's
 
 | # | File | Buttons | Grass | Lesson |
 |---|---|---|---|---|
-| 1 | `Act1/01_FirstSteps` | Forward | yes | A ball straight ahead: queue forward twice, Execute. |
+| 1 | the level select map | Forward | - | The first level is one cell ahead: queue forward once, launch. This replaced the puzzle `Act1/01_FirstSteps` (see `LevelSelect.md`). |
 | 2 | `Act1/02_Turning` | + turn left / right | yes | The ball is close but not in a straight line. |
 | 3 | `Act1/03_Obstacle` | same | yes | A block in the way; hitting it destroys the ship (Reset and retry). Ball a little farther. |
 | 4 | `Act1/04_Gathering` | same | yes | Three balls and three blocks; long plans cost more, so it takes several turns. |
 | 5 | `Act1/05_UpHigh` | + up / down | yes | The ball is above the board. |
 | 6 | `Act1/06_TheChaser` | all (adds wait) | no | A chaser. It steps toward the ship every tick, and turning is a tick spent standing still, so turning next to it gets you caught. Turn away from it first. |
 
-Each has a verified solution in `GatherAndHunt.PuzzleRules.TutorialSolutions`,
+Each puzzle has a verified solution in `GatherAndHunt.PuzzleRules.TutorialSolutions`,
 which also checks that the tempting wrong play fails in 3 and 6.
 
 Next: several one-ship puzzles of rising complexity (Act 1, from #7).

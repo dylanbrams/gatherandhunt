@@ -18,11 +18,14 @@
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
 #include "GatherAndHuntFrontEnd.h"
+#include "GatherAndHuntInput.h"
 #include "GatherAndHuntPuzzleBoardView.h"
 #include "GatherAndHuntPuzzleGameMode.h"
 #include "GatherAndHuntPuzzleHUD.h"
 #include "GatherAndHuntPuzzleSession.h"
 #include "GatherAndHuntTurnPlanner.h"
+#include "GatherAndHuntWidgetBuilder.h"
+#include "Framework/Application/SlateApplication.h"
 #include "HAL/FileManager.h"
 #include "Misc/Paths.h"
 
@@ -39,7 +42,8 @@ namespace
 		SkipPlayback,
 		FrameBoard,
 		ToggleSide,
-		RevertScript
+		RevertScript,
+		ToggleDetails
 	};
 
 	enum class EFileCommand : int32
@@ -49,7 +53,8 @@ namespace
 		RefreshList,
 		Save,
 		EditBoard,
-		Menu
+		Menu,
+		ToggleAuthoring
 	};
 
 	const FLinearColor PanelColor(0.02f, 0.02f, 0.03f, 0.78f);
@@ -68,7 +73,7 @@ namespace
 		{
 		case EGatherAndHuntTurtleRole::Ally: return TEXT("ALLY");
 		case EGatherAndHuntTurtleRole::Opponent: return TEXT("OPPONENT");
-		default: return TEXT("PLAYER");
+		default: return TEXT("SHIP");
 		}
 	}
 	const FLinearColor TierColors[4] = {
@@ -243,6 +248,13 @@ FString UGatherAndHuntPlannerWidget::GetLoadedPuzzleFile() const
 	return File.EndsWith(TEXT(".dat")) ? File : File + TEXT(".dat");
 }
 
+bool UGatherAndHuntPlannerWidget::IsCampaignPuzzle() const
+{
+	const UWorld* const World = GetWorld();
+	const AGatherAndHuntPuzzleGameMode* const GameMode = World != nullptr ? World->GetAuthGameMode<AGatherAndHuntPuzzleGameMode>() : nullptr;
+	return GameMode != nullptr && !GameMode->CampaignNodeId.IsEmpty();
+}
+
 UWidget* UGatherAndHuntPlannerWidget::MakePanel(UWidget* Content)
 {
 	UBorder* const Panel = WidgetTree->ConstructWidget<UBorder>();
@@ -301,22 +313,10 @@ void UGatherAndHuntPlannerWidget::BuildTree()
 		IntroSize->SetContent(IntroText);
 		AddRow(Info, IntroSize, 4.0f);
 
-		UHorizontalBox* const FileRow = WidgetTree->ConstructWidget<UHorizontalBox>();
-		PuzzleFileCombo = WidgetTree->ConstructWidget<UComboBoxString>();
-		USizeBox* const ComboSize = WidgetTree->ConstructWidget<USizeBox>();
-		ComboSize->SetWidthOverride(220.0f);
-		ComboSize->SetContent(PuzzleFileCombo);
-		AddCell(FileRow, ComboSize);
-		AddCell(FileRow, MakeButton(TEXT("Load"), static_cast<int32>(EFileCommand::Load), &UGatherAndHuntPlannerWidget::OnFileButton));
-		AddCell(FileRow, MakeButton(TEXT("Reset"), static_cast<int32>(EFileCommand::Reset), &UGatherAndHuntPlannerWidget::OnFileButton));
-		AddCell(FileRow, MakeButton(TEXT("Rescan"), static_cast<int32>(EFileCommand::RefreshList), &UGatherAndHuntPlannerWidget::OnFileButton));
-		AddCell(FileRow, MakeButton(TEXT("Save file (Ctrl+S)"), static_cast<int32>(EFileCommand::Save), &UGatherAndHuntPlannerWidget::OnFileButton));
-		AddRow(Info, FileRow, 8.0f);
-
 		UHorizontalBox* const ModeRow = WidgetTree->ConstructWidget<UHorizontalBox>();
-		AddCell(ModeRow, MakeButton(TEXT("Edit board (B)"), static_cast<int32>(EFileCommand::EditBoard), &UGatherAndHuntPlannerWidget::OnFileButton));
-		AddCell(ModeRow, MakeButton(TEXT("Main menu"), static_cast<int32>(EFileCommand::Menu), &UGatherAndHuntPlannerWidget::OnFileButton));
-		AddRow(Info, ModeRow, 4.0f);
+		AddCell(ModeRow, MakeButton(TEXT("Reset"), static_cast<int32>(EFileCommand::Reset), &UGatherAndHuntPlannerWidget::OnFileButton));
+		AddCell(ModeRow, MakeButton(IsCampaignPuzzle() ? TEXT("Back to map") : TEXT("Main menu"), static_cast<int32>(EFileCommand::Menu), &UGatherAndHuntPlannerWidget::OnFileButton));
+		AddRow(Info, ModeRow, 8.0f);
 
 		MessageText = MakeText(TEXT(""), 10, GoodColor);
 		AddRow(Info, MessageText, 4.0f);
@@ -327,28 +327,57 @@ void UGatherAndHuntPlannerWidget::BuildTree()
 	// --- Left: turtle list --------------------------------------------------
 	{
 		UVerticalBox* const Turtles = WidgetTree->ConstructWidget<UVerticalBox>();
-		SideButton = MakeButton(TEXT(""), static_cast<int32>(EEditCommand::ToggleSide), &UGatherAndHuntPlannerWidget::OnEditButton, 10);
-		SideLabel = Cast<UTextBlock>(SideButton->GetContent());
-		AddRow(Turtles, SideButton, 0.0f);
-		AddRow(Turtles, MakeText(TEXT("TURTLES  (Tab / 1-9)"), 10, DimTextColor), 6.0f);
+		AddRow(Turtles, MakeText(TEXT("TURTLES  (Tab / 1-9)"), 10, DimTextColor), 0.0f);
 		TurtleList = WidgetTree->ConstructWidget<UVerticalBox>();
 		AddRow(Turtles, TurtleList, 4.0f);
-		Place(MakePanel(Turtles), FVector2D(0.0f, 0.5f), FVector2D(16.0f, 0.0f));
+		TurtlePanel = MakePanel(Turtles);
+		Place(TurtlePanel, FVector2D(0.0f, 0.5f), FVector2D(16.0f, 0.0f));
 	}
 
-	// --- Right: preview, validation, submit --------------------------------
+	// --- Bottom left: authoring menu ---------------------------------------
+	// Everything that changes the puzzle rather than plays it. Collapsed until
+	// opened, and absent until the GameMode says the tools are available.
+	{
+		UVerticalBox* const Menu = WidgetTree->ConstructWidget<UVerticalBox>();
+		UGatherAndHuntPlannerButton* const Toggle = MakeButton(TEXT(""), static_cast<int32>(EFileCommand::ToggleAuthoring), &UGatherAndHuntPlannerWidget::OnFileButton, 10);
+		AuthoringToggleLabel = Cast<UTextBlock>(Toggle->GetContent());
+		AddRow(Menu, Toggle, 0.0f);
+
+		UVerticalBox* const Body = WidgetTree->ConstructWidget<UVerticalBox>();
+		SideButton = MakeButton(TEXT(""), static_cast<int32>(EEditCommand::ToggleSide), &UGatherAndHuntPlannerWidget::OnEditButton, 10);
+		SideLabel = Cast<UTextBlock>(SideButton->GetContent());
+		AddRow(Body, SideButton, 6.0f);
+		AddRow(Body, MakeButton(TEXT("Edit board (B)"), static_cast<int32>(EFileCommand::EditBoard), &UGatherAndHuntPlannerWidget::OnFileButton), 4.0f);
+		AddRow(Body, MakeButton(TEXT("Save file (Ctrl+S)"), static_cast<int32>(EFileCommand::Save), &UGatherAndHuntPlannerWidget::OnFileButton), 4.0f);
+
+		AddRow(Body, MakeText(TEXT("OPEN ANOTHER BOARD"), 10, DimTextColor), 10.0f);
+		PuzzleFileCombo = WidgetTree->ConstructWidget<UComboBoxString>();
+		USizeBox* const ComboSize = WidgetTree->ConstructWidget<USizeBox>();
+		ComboSize->SetWidthOverride(220.0f);
+		ComboSize->SetContent(PuzzleFileCombo);
+		AddRow(Body, ComboSize, 4.0f);
+		UHorizontalBox* const FileRow = WidgetTree->ConstructWidget<UHorizontalBox>();
+		AddCell(FileRow, MakeButton(TEXT("Load"), static_cast<int32>(EFileCommand::Load), &UGatherAndHuntPlannerWidget::OnFileButton));
+		AddCell(FileRow, MakeButton(TEXT("Rescan"), static_cast<int32>(EFileCommand::RefreshList), &UGatherAndHuntPlannerWidget::OnFileButton));
+		AddRow(Body, FileRow, 4.0f);
+		AuthoringBody = Body;
+		AddRow(Menu, AuthoringBody, 0.0f);
+
+		AuthoringPanel = MakePanel(Menu);
+		Place(AuthoringPanel, FVector2D(0.0f, 1.0f), FVector2D(16.0f, -16.0f));
+	}
+
+	// --- Right: execute; the turn's numbers and the key list on request ------
 	{
 		UVerticalBox* const Preview = WidgetTree->ConstructWidget<UVerticalBox>();
-		AddRow(Preview, MakeText(TEXT("PREVIEW"), 10, DimTextColor), 0.0f);
-		PreviewText = MakeText(TEXT(""), 11);
-		AddRow(Preview, PreviewText);
-
-		UHorizontalBox* const ToggleRow = WidgetTree->ConstructWidget<UHorizontalBox>();
-		ScriptedPreviewCheck = WidgetTree->ConstructWidget<UCheckBox>();
-		ScriptedPreviewCheck->OnCheckStateChanged.AddDynamic(this, &UGatherAndHuntPlannerWidget::HandleScriptedPreviewToggled);
-		AddCell(ToggleRow, ScriptedPreviewCheck);
-		AddCell(ToggleRow, MakeText(TEXT("Include scripted turtles (P)"), 10, DimTextColor));
-		AddRow(Preview, ToggleRow, 6.0f);
+		UHorizontalBox* const SubmitRow = WidgetTree->ConstructWidget<UHorizontalBox>();
+		SubmitButton = MakeButton(TEXT(""), static_cast<int32>(EEditCommand::Submit), &UGatherAndHuntPlannerWidget::OnEditButton, 16);
+		SubmitLabel = Cast<UTextBlock>(SubmitButton->GetContent());
+		AddCell(SubmitRow, SubmitButton);
+		AddCell(SubmitRow, MakeButton(TEXT("Skip anim"), static_cast<int32>(EEditCommand::SkipPlayback), &UGatherAndHuntPlannerWidget::OnEditButton));
+		RevertButton = MakeButton(TEXT("Revert"), static_cast<int32>(EEditCommand::RevertScript), &UGatherAndHuntPlannerWidget::OnEditButton);
+		AddCell(SubmitRow, RevertButton);
+		AddRow(Preview, SubmitRow, 0.0f);
 
 		ValidationText = MakeText(TEXT(""), 11, ErrorColor);
 		ValidationText->SetAutoWrapText(true);
@@ -357,33 +386,70 @@ void UGatherAndHuntPlannerWidget::BuildTree()
 		ValidationSize->SetContent(ValidationText);
 		AddRow(Preview, ValidationSize, 6.0f);
 
-		UHorizontalBox* const SubmitRow = WidgetTree->ConstructWidget<UHorizontalBox>();
-		SubmitButton = MakeButton(TEXT(""), static_cast<int32>(EEditCommand::Submit), &UGatherAndHuntPlannerWidget::OnEditButton, 13);
-		SubmitLabel = Cast<UTextBlock>(SubmitButton->GetContent());
-		AddCell(SubmitRow, SubmitButton);
-		AddCell(SubmitRow, MakeButton(TEXT("Skip anim"), static_cast<int32>(EEditCommand::SkipPlayback), &UGatherAndHuntPlannerWidget::OnEditButton));
-		RevertButton = MakeButton(TEXT("Revert"), static_cast<int32>(EEditCommand::RevertScript), &UGatherAndHuntPlannerWidget::OnEditButton);
-		AddCell(SubmitRow, RevertButton);
-		AddRow(Preview, SubmitRow, 8.0f);
+		UVerticalBox* const Details = WidgetTree->ConstructWidget<UVerticalBox>();
+		AddRow(Details, MakeText(TEXT("PREVIEW"), 10, DimTextColor), 0.0f);
+		PreviewText = MakeText(TEXT(""), 11);
+		AddRow(Details, PreviewText);
+
+		UHorizontalBox* const ToggleRow = WidgetTree->ConstructWidget<UHorizontalBox>();
+		ScriptedPreviewCheck = WidgetTree->ConstructWidget<UCheckBox>();
+		ScriptedPreviewCheck->OnCheckStateChanged.AddDynamic(this, &UGatherAndHuntPlannerWidget::HandleScriptedPreviewToggled);
+		AddCell(ToggleRow, ScriptedPreviewCheck);
+		AddCell(ToggleRow, MakeText(TEXT("Include scripted turtles (P)"), 10, DimTextColor));
+		AddRow(Details, ToggleRow, 6.0f);
 
 		UTextBlock* const Help = MakeText(
-			TEXT("W fwd   A/D yaw   R/F pitch   S wait\n")
-			TEXT("Bksp delete   [ ] shift   Esc cursor to end\n")
-			TEXT("C clear turtle   Shift+C clear all\n")
-			TEXT("O edit script (allies + opponents)   Ctrl+S save\n")
+			TEXT("Tab: keys fly the camera / queue moves\n")
+			TEXT("Camera keys: W/S A/D fly   Q/E down/up   Shift fast\n")
+			TEXT("Move keys: W fwd   A/D yaw   R/F pitch   S wait\n")
+			TEXT("Bksp delete   , . shift move   Esc back\n")
+			TEXT("C clear ship   Shift+C clear all   [ ] or 1-9 pick ship\n")
+			TEXT("M show moves   F5 restart\n")
+			TEXT("Gamepad: D-pad moves, Y/X nose up/down, A execute, B undo,\n")
+			TEXT("LB/RB ship, sticks and triggers fly the camera\n")
 			TEXT("Drag move chips to reorder   Right-click chip: delete\n")
-			TEXT("Drag: orbit   Wheel: zoom   Home: reframe"),
+			TEXT("Drag: orbit   Right drag: look   Middle drag: slide\n")
+			TEXT("Wheel: zoom   Home: reframe"),
 			9, DimTextColor);
-		AddRow(Preview, Help, 10.0f);
+		AddRow(Details, Help, 10.0f);
+		PreviewDetails = Details;
+		AddRow(Preview, PreviewDetails, 8.0f);
 
 		Place(MakePanel(Preview), FVector2D(1.0f, 0.0f), FVector2D(-16.0f, 16.0f));
 	}
 
-	// --- Bottom: move queue, move buttons, budget ---------------------------
+	// --- Bottom: the move buttons; the queued moves and budget on request ----
 	{
 		UVerticalBox* const Queue = WidgetTree->ConstructWidget<UVerticalBox>();
+
+		// The prototype's big picture buttons. Everything else here is behind
+		// "Show moves".
+		UHorizontalBox* const Moves = WidgetTree->ConstructWidget<UHorizontalBox>();
+		const EGatherAndHuntPuzzleMoveKind MoveKinds[] = {
+			EGatherAndHuntPuzzleMoveKind::Forward, EGatherAndHuntPuzzleMoveKind::YawLeft, EGatherAndHuntPuzzleMoveKind::YawRight,
+			EGatherAndHuntPuzzleMoveKind::PitchUp, EGatherAndHuntPuzzleMoveKind::PitchDown, EGatherAndHuntPuzzleMoveKind::Wait};
+		MoveButtons.Reset();
+		for (const EGatherAndHuntPuzzleMoveKind Kind : MoveKinds)
+		{
+			UGatherAndHuntPlannerButton* const Button = GatherAndHuntUI::MakeMoveButton(WidgetTree, this, Kind, &UGatherAndHuntPlannerWidget::OnMoveButton);
+			MoveButtons.Add(Button);
+			AddCell(Moves, Button);
+		}
+		AddCell(Moves, MakeText(TEXT("   "), 11));
+		AddCell(Moves, MakeButton(TEXT("  Undo  "), static_cast<int32>(EEditCommand::Delete), &UGatherAndHuntPlannerWidget::OnEditButton, 13));
+		UGatherAndHuntPlannerButton* const DetailsButton = MakeButton(TEXT(""), static_cast<int32>(EEditCommand::ToggleDetails), &UGatherAndHuntPlannerWidget::OnEditButton, 11);
+		DetailsLabel = Cast<UTextBlock>(DetailsButton->GetContent());
+		AddCell(Moves, DetailsButton);
+		AddRow(Queue, Moves, 0.0f);
+
+		KeyModeText = MakeText(TEXT(""), 10, DimTextColor);
+		AddRow(Queue, KeyModeText, 6.0f);
+
+		UVerticalBox* const Details = WidgetTree->ConstructWidget<UVerticalBox>();
+		QueueDetails = Details;
+		AddRow(Queue, QueueDetails, 8.0f);
 		QueueHeaderText = MakeText(TEXT(""), 11);
-		AddRow(Queue, QueueHeaderText, 0.0f);
+		AddRow(Details, QueueHeaderText, 0.0f);
 
 		QueueStrip = WidgetTree->ConstructWidget<UWrapBox>();
 		QueueStrip->SetInnerSlotPadding(FVector2D(3.0f, 3.0f));
@@ -393,26 +459,15 @@ void UGatherAndHuntPlannerWidget::BuildTree()
 		StripSize->SetMinDesiredHeight(34.0f);
 		StripSize->SetWidthOverride(760.0f);
 		StripSize->SetContent(QueueStrip);
-		AddRow(Queue, StripSize, 4.0f);
+		AddRow(Details, StripSize, 4.0f);
 
-		UHorizontalBox* const Moves = WidgetTree->ConstructWidget<UHorizontalBox>();
-		const EGatherAndHuntPuzzleMoveKind MoveKinds[] = {
-			EGatherAndHuntPuzzleMoveKind::Forward, EGatherAndHuntPuzzleMoveKind::YawLeft, EGatherAndHuntPuzzleMoveKind::YawRight,
-			EGatherAndHuntPuzzleMoveKind::PitchUp, EGatherAndHuntPuzzleMoveKind::PitchDown, EGatherAndHuntPuzzleMoveKind::Wait};
-		MoveButtons.Reset();
-		for (const EGatherAndHuntPuzzleMoveKind Kind : MoveKinds)
-		{
-			UGatherAndHuntPlannerButton* const Button = MakeButton(FString::Printf(TEXT(" %s "), MoveLabel(Kind)), static_cast<int32>(Kind), &UGatherAndHuntPlannerWidget::OnMoveButton, 12);
-			MoveButtons.Add(Button);
-			AddCell(Moves, Button);
-		}
-		AddCell(Moves, MakeText(TEXT("   "), 11));
-		AddCell(Moves, MakeButton(TEXT(" < "), static_cast<int32>(EEditCommand::ShiftLeft), &UGatherAndHuntPlannerWidget::OnEditButton));
-		AddCell(Moves, MakeButton(TEXT(" > "), static_cast<int32>(EEditCommand::ShiftRight), &UGatherAndHuntPlannerWidget::OnEditButton));
-		AddCell(Moves, MakeButton(TEXT("Delete"), static_cast<int32>(EEditCommand::Delete), &UGatherAndHuntPlannerWidget::OnEditButton));
-		AddCell(Moves, MakeButton(TEXT("Clear"), static_cast<int32>(EEditCommand::ClearTurtle), &UGatherAndHuntPlannerWidget::OnEditButton));
-		AddCell(Moves, MakeButton(TEXT("Clear all"), static_cast<int32>(EEditCommand::ClearAll), &UGatherAndHuntPlannerWidget::OnEditButton));
-		AddRow(Queue, Moves, 6.0f);
+		UHorizontalBox* const EditRow = WidgetTree->ConstructWidget<UHorizontalBox>();
+		AddCell(EditRow, MakeButton(TEXT(" < "), static_cast<int32>(EEditCommand::ShiftLeft), &UGatherAndHuntPlannerWidget::OnEditButton));
+		AddCell(EditRow, MakeButton(TEXT(" > "), static_cast<int32>(EEditCommand::ShiftRight), &UGatherAndHuntPlannerWidget::OnEditButton));
+		AddCell(EditRow, MakeButton(TEXT("Delete"), static_cast<int32>(EEditCommand::Delete), &UGatherAndHuntPlannerWidget::OnEditButton));
+		AddCell(EditRow, MakeButton(TEXT("Clear"), static_cast<int32>(EEditCommand::ClearTurtle), &UGatherAndHuntPlannerWidget::OnEditButton));
+		AddCell(EditRow, MakeButton(TEXT("Clear all"), static_cast<int32>(EEditCommand::ClearAll), &UGatherAndHuntPlannerWidget::OnEditButton));
+		AddRow(Details, EditRow, 6.0f);
 
 		UHorizontalBox* const BudgetRow = WidgetTree->ConstructWidget<UHorizontalBox>();
 		BudgetBar = WidgetTree->ConstructWidget<UProgressBar>();
@@ -423,7 +478,7 @@ void UGatherAndHuntPlannerWidget::BuildTree()
 		AddCell(BudgetRow, BarSize);
 		BudgetText = MakeText(TEXT(""), 11);
 		AddCell(BudgetRow, BudgetText);
-		AddRow(Queue, BudgetRow, 8.0f);
+		AddRow(Details, BudgetRow, 8.0f);
 
 		Place(MakePanel(Queue), FVector2D(0.5f, 1.0f), FVector2D(0.0f, -16.0f));
 	}
@@ -437,10 +492,47 @@ void UGatherAndHuntPlannerWidget::Refresh()
 	{
 		return; // Tree not built (or supplied by a Blueprint subclass).
 	}
+	RefreshAuthoringMenu();
+	RefreshDetails();
 	RefreshInfo();
 	RefreshTurtleList();
 	RefreshQueue();
 	RefreshPreview();
+}
+
+bool UGatherAndHuntPlannerWidget::CanAuthor() const
+{
+	// Without a puzzle GameMode (a test, another host) nothing is held back.
+	const UWorld* const World = GetWorld();
+	const AGatherAndHuntPuzzleGameMode* const GameMode = World != nullptr ? World->GetAuthGameMode<AGatherAndHuntPuzzleGameMode>() : nullptr;
+	return GameMode == nullptr || GameMode->AreAuthoringToolsAvailable();
+}
+
+void UGatherAndHuntPlannerWidget::RefreshAuthoringMenu()
+{
+	if (AuthoringPanel == nullptr)
+	{
+		return;
+	}
+	AuthoringPanel->SetVisibility(CanAuthor() ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+	AuthoringBody->SetVisibility(bAuthoringMenuOpen ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+	AuthoringToggleLabel->SetText(FText::FromString(bAuthoringMenuOpen ? TEXT("AUTHORING  (hide)") : TEXT("AUTHORING  (show)")));
+}
+
+void UGatherAndHuntPlannerWidget::RefreshDetails()
+{
+	// The plain screen is the picture buttons, Undo and Execute. The queued
+	// moves, the budget, the turn's numbers and the key list come with "Show moves".
+	const ESlateVisibility Shown = bShowDetails ? ESlateVisibility::Visible : ESlateVisibility::Collapsed;
+	QueueDetails->SetVisibility(Shown);
+	PreviewDetails->SetVisibility(Shown);
+	DetailsLabel->SetText(FText::FromString(bShowDetails ? TEXT("Hide moves") : TEXT("Show moves")));
+	// One ship needs no list to pick from.
+	const bool bSeveralShips = Planner != nullptr && Planner->GetTurtleSummaries().Num() > 1;
+	TurtlePanel->SetVisibility(bShowDetails || bSeveralShips ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+	KeyModeText->SetText(FText::FromString(Input != nullptr && Input->DoKeysMoveShip()
+		? TEXT("Keys move the ship: W forward, A/D turn, R/F nose up/down, S wait.   Tab: keys fly the camera")
+		: TEXT("Keys fly the camera: W/A/S/D, Q/E down/up. Drag to turn.   Tab: keys move the ship")));
 }
 
 void UGatherAndHuntPlannerWidget::RefreshInfo()
@@ -470,15 +562,18 @@ void UGatherAndHuntPlannerWidget::RefreshInfo()
 		Status += FString::Printf(TEXT("    Objectives needed %d"), Session->GetTargetObjectiveCount());
 	}
 	Status += FString::Printf(TEXT("    [%s]"), OutcomeLabel(Session->GetOutcome()));
-	const int32 BoardTurn = Session->GetCurrentTurnNumber();
-	Status += FString::Printf(TEXT("\nScripted turn: %s"), Session->HasScriptedTurn(BoardTurn) ? TEXT("yes") : TEXT("none"));
-	if (Planner != nullptr && Planner->HasUnsavedScriptDraft())
+	if (CanAuthor())
 	{
-		Status += TEXT("   (draft not saved to turn)");
-	}
-	if (Session->HasUnsavedChanges())
-	{
-		Status += TEXT("   * board file has unsaved changes");
+		const int32 BoardTurn = Session->GetCurrentTurnNumber();
+		Status += FString::Printf(TEXT("\nScripted turn: %s"), Session->HasScriptedTurn(BoardTurn) ? TEXT("yes") : TEXT("none"));
+		if (Planner != nullptr && Planner->HasUnsavedScriptDraft())
+		{
+			Status += TEXT("   (draft not saved to turn)");
+		}
+		if (Session->HasUnsavedChanges())
+		{
+			Status += TEXT("   * board file has unsaved changes");
+		}
 	}
 	StatusText->SetText(FText::FromString(Status));
 	IntroText->SetText(FText::FromString(Session->GetIntroText()));
@@ -502,8 +597,9 @@ void UGatherAndHuntPlannerWidget::RefreshTurtleList()
 	for (int32 Index = 0; Index < Summaries.Num(); ++Index)
 	{
 		const FGatherAndHuntPlannerTurtleSummary& Summary = Summaries[Index];
-		FString Label = FString::Printf(TEXT("%d  T%d  (%d,%d,%d) %s"),
-			Index + 1, Summary.TurtleId,
+		// "SHIP 1", "SHIP 2": the number is the row (and its 1-9 key), not a player.
+		FString Label = FString::Printf(TEXT("%s %d  T%d  (%d,%d,%d) %s"),
+			RoleLabel(Summary.Role), Index + 1, Summary.TurtleId,
 			Summary.GridPosition.X, Summary.GridPosition.Y, Summary.GridPosition.Z,
 			*FacingLabel(Summary.Heading, Summary.Pitch));
 		if (Summary.CarriedPoints > 0)
@@ -521,8 +617,7 @@ void UGatherAndHuntPlannerWidget::RefreshTurtleList()
 		}
 		Label += FateLabel(Summary.PreviewFate);
 
-		UGatherAndHuntPlannerButton* const Button = MakeButton(
-			FString::Printf(TEXT("%s  %s"), RoleLabel(Summary.Role), *Label), Summary.TurtleId, &UGatherAndHuntPlannerWidget::OnTurtleButton, 10);
+		UGatherAndHuntPlannerButton* const Button = MakeButton(Label, Summary.TurtleId, &UGatherAndHuntPlannerWidget::OnTurtleButton, 10);
 		if (Summary.bHasValidationError)
 		{
 			Button->SetBackgroundColor(ErrorColor);
@@ -660,6 +755,13 @@ void UGatherAndHuntPlannerWidget::RefreshPreview()
 	{
 		Message = TEXT("Playing turn... (Enter to skip)");
 	}
+	else if (bFinished && !bEditingScript && IsCampaignPuzzle() && Session->GetOutcome() == EGatherAndHuntPuzzleOutcome::Victory)
+	{
+		const FString& Reward = GetWorld()->GetAuthGameMode<AGatherAndHuntPuzzleGameMode>()->CampaignRewardText;
+		Message = Reward.IsEmpty()
+			? FString(TEXT("VICTORY. Enter: back to the map."))
+			: FString::Printf(TEXT("VICTORY. Unlocked on the map: %s. Enter: back to the map."), *Reward);
+	}
 	else if (bFinished && !bEditingScript)
 	{
 		Message = FString::Printf(TEXT("%s. Press Reset to replay the puzzle."), OutcomeLabel(Session->GetOutcome()));
@@ -749,6 +851,7 @@ void UGatherAndHuntPlannerWidget::OnEditButton(const int32 Command)
 	case EEditCommand::FrameBoard: if (BoardView != nullptr) { BoardView->FrameBoard(); } break;
 	case EEditCommand::ToggleSide: Planner->SetEditingScript(!Planner->IsEditingScript()); break;
 	case EEditCommand::RevertScript: Planner->RevertScriptDraft(); ShowMessage(TEXT("Script draft reverted."), false); break;
+	case EEditCommand::ToggleDetails: bShowDetails = !bShowDetails; Refresh(); break;
 	}
 }
 
@@ -779,6 +882,7 @@ void UGatherAndHuntPlannerWidget::OnFileButton(const int32 Command)
 	case EFileCommand::Save: SavePuzzleFile(); break;
 	case EFileCommand::EditBoard: EditBoard(); break;
 	case EFileCommand::Menu: BackToMenu(); break;
+	case EFileCommand::ToggleAuthoring: bAuthoringMenuOpen = !bAuthoringMenuOpen; RefreshAuthoringMenu(); break;
 	}
 }
 
@@ -797,6 +901,11 @@ void UGatherAndHuntPlannerWidget::BackToMenu()
 	{
 		bMenuConfirmPending = true;
 		ShowMessage(TEXT("Unsaved changes to the board file. Press Main menu again to discard them."), true);
+		return;
+	}
+	if (IsCampaignPuzzle())
+	{
+		UGatherAndHuntFrontEnd::OpenCampaignMap(this);
 		return;
 	}
 	UGatherAndHuntFrontEnd::OpenMainMenu(this);
@@ -921,124 +1030,118 @@ void UGatherAndHuntPlannerWidget::HandleScriptedPreviewToggled(const bool bIsChe
 
 // --- Input ------------------------------------------------------------------
 
-FReply UGatherAndHuntPlannerWidget::NativeOnKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent)
+void UGatherAndHuntPlannerWidget::BindInput(UGatherAndHuntInput* InInput)
 {
-	if (Planner == nullptr)
+	Input = InInput;
+	if (Input != nullptr)
 	{
-		return Super::NativeOnKeyDown(InGeometry, InKeyEvent);
+		Input->OnPressed.AddUObject(this, &UGatherAndHuntPlannerWidget::HandleInputPressed);
 	}
+	Refresh();
+}
 
-	const FKey Key = InKeyEvent.GetKey();
-	const bool bPlaying = BoardView != nullptr && BoardView->IsPlayingBack();
-
-	if (Key == EKeys::Enter || Key == EKeys::SpaceBar)
+void UGatherAndHuntPlannerWidget::HandleInputPressed(const EGatherAndHuntInputAction Action, const float Value)
+{
+	// Not while the board editor has the screen.
+	if (Planner == nullptr || !IsInViewport())
 	{
+		return;
+	}
+	const bool bPlaying = BoardView != nullptr && BoardView->IsPlayingBack();
+	const bool bCanAuthor = CanAuthor();
+
+	switch (Action)
+	{
+	case EGatherAndHuntInputAction::Submit:
 		if (bPlaying)
 		{
 			BoardView->SkipPlayback();
 		}
-		else if (Key == EKeys::Enter)
+		else if (IsCampaignPuzzle() && !Planner->IsEditingScript()
+			&& Session != nullptr && Session->GetOutcome() == EGatherAndHuntPuzzleOutcome::Victory)
+		{
+			// A level entered from the level select map: winning leads back to it.
+			BackToMenu();
+		}
+		else
 		{
 			SubmitPlan();
 		}
-		return FReply::Handled();
-	}
-	if (Key == EKeys::Home)
-	{
-		OnEditButton(static_cast<int32>(EEditCommand::FrameBoard));
-		return FReply::Handled();
-	}
-	if (Key == EKeys::S && InKeyEvent.IsControlDown())
-	{
-		SavePuzzleFile();
-		return FReply::Handled();
-	}
-	if (Key == EKeys::B)
-	{
-		EditBoard();
-		return FReply::Handled();
-	}
-	if (Key == EKeys::O)
-	{
-		OnEditButton(static_cast<int32>(EEditCommand::ToggleSide));
-		return FReply::Handled();
-	}
-	if (Key == EKeys::P)
-	{
-		Planner->SetPreviewIncludesScripted(!Planner->GetPreviewIncludesScripted());
-		return FReply::Handled();
-	}
-	if (Key == EKeys::Tab)
-	{
-		Planner->SelectAdjacentTurtle(InKeyEvent.IsShiftDown() ? -1 : 1);
-		return FReply::Handled();
-	}
-
-	static const FKey DigitKeys[] = {EKeys::One, EKeys::Two, EKeys::Three, EKeys::Four, EKeys::Five, EKeys::Six, EKeys::Seven, EKeys::Eight, EKeys::Nine};
-	for (int32 Index = 0; Index < UE_ARRAY_COUNT(DigitKeys); ++Index)
-	{
-		if (Key == DigitKeys[Index])
+		return;
+	case EGatherAndHuntInputAction::SkipPlayback:
+		if (bPlaying)
 		{
-			const TArray<FGatherAndHuntPlannerTurtleSummary> Summaries = Planner->GetTurtleSummaries();
-			if (Summaries.IsValidIndex(Index))
-			{
-				Planner->SelectTurtle(Summaries[Index].TurtleId);
-			}
-			return FReply::Handled();
+			BoardView->SkipPlayback();
 		}
+		return;
+	case EGatherAndHuntInputAction::Back:
+		// Backs out one step: off a selected move first, then out of the level.
+		if (Planner->GetSelectedMoveIndex() != INDEX_NONE)
+		{
+			Planner->SelectMove(INDEX_NONE);
+		}
+		else
+		{
+			BackToMenu();
+		}
+		return;
+	case EGatherAndHuntInputAction::ResetPuzzle: ResetPuzzle(); return;
+	case EGatherAndHuntInputAction::Reframe: OnEditButton(static_cast<int32>(EEditCommand::FrameBoard)); return;
+	case EGatherAndHuntInputAction::ToggleDetails: OnEditButton(static_cast<int32>(EEditCommand::ToggleDetails)); return;
+	case EGatherAndHuntInputAction::ToggleKeyMode:
+		// The letter keys either fly the camera or queue moves.
+		if (Input != nullptr)
+		{
+			Input->SetKeysMoveShip(!Input->DoKeysMoveShip());
+		}
+		Refresh();
+		return;
+	case EGatherAndHuntInputAction::NextShip: Planner->SelectAdjacentTurtle(1); return;
+	case EGatherAndHuntInputAction::PreviousShip: Planner->SelectAdjacentTurtle(-1); return;
+	case EGatherAndHuntInputAction::SelectShip:
+	{
+		const TArray<FGatherAndHuntPlannerTurtleSummary> Summaries = Planner->GetTurtleSummaries();
+		const int32 Row = FMath::RoundToInt(Value) - 1;
+		if (Summaries.IsValidIndex(Row))
+		{
+			Planner->SelectTurtle(Summaries[Row].TurtleId);
+		}
+		return;
+	}
+	case EGatherAndHuntInputAction::ToggleScriptedPreview: Planner->SetPreviewIncludesScripted(!Planner->GetPreviewIncludesScripted()); return;
+	// The authoring shortcuts go with the authoring menu.
+	case EGatherAndHuntInputAction::SaveFile: if (bCanAuthor) { SavePuzzleFile(); } return;
+	case EGatherAndHuntInputAction::EditBoard: if (bCanAuthor) { EditBoard(); } return;
+	case EGatherAndHuntInputAction::ToggleScriptMode: if (bCanAuthor) { OnEditButton(static_cast<int32>(EEditCommand::ToggleSide)); } return;
+	default: break;
 	}
 
+	// The plan can't change while its turn plays back.
 	if (bPlaying)
 	{
-		return FReply::Handled();
+		return;
 	}
+	switch (Action)
+	{
+	case EGatherAndHuntInputAction::MoveForward: Planner->AddMove(EGatherAndHuntPuzzleMoveKind::Forward); break;
+	case EGatherAndHuntInputAction::MoveYawLeft: Planner->AddMove(EGatherAndHuntPuzzleMoveKind::YawLeft); break;
+	case EGatherAndHuntInputAction::MoveYawRight: Planner->AddMove(EGatherAndHuntPuzzleMoveKind::YawRight); break;
+	case EGatherAndHuntInputAction::MovePitchUp: Planner->AddMove(EGatherAndHuntPuzzleMoveKind::PitchUp); break;
+	case EGatherAndHuntInputAction::MovePitchDown: Planner->AddMove(EGatherAndHuntPuzzleMoveKind::PitchDown); break;
+	case EGatherAndHuntInputAction::MoveWait: Planner->AddMove(EGatherAndHuntPuzzleMoveKind::Wait); break;
+	case EGatherAndHuntInputAction::Undo: Planner->RemoveSelectedMove(); break;
+	case EGatherAndHuntInputAction::ShiftMoveLeft: Planner->ShiftSelectedMove(-1); break;
+	case EGatherAndHuntInputAction::ShiftMoveRight: Planner->ShiftSelectedMove(1); break;
+	case EGatherAndHuntInputAction::ClearShip: Planner->ClearSelectedTurtle(); break;
+	case EGatherAndHuntInputAction::ClearAll: Planner->ClearAll(); break;
+	default: break;
+	}
+}
 
-	struct FMoveKey { FKey Key; EGatherAndHuntPuzzleMoveKind Kind; };
-	static const FMoveKey MoveKeys[] = {
-		{EKeys::W, EGatherAndHuntPuzzleMoveKind::Forward},
-		{EKeys::Up, EGatherAndHuntPuzzleMoveKind::Forward},
-		{EKeys::A, EGatherAndHuntPuzzleMoveKind::YawLeft},
-		{EKeys::Left, EGatherAndHuntPuzzleMoveKind::YawLeft},
-		{EKeys::D, EGatherAndHuntPuzzleMoveKind::YawRight},
-		{EKeys::Right, EGatherAndHuntPuzzleMoveKind::YawRight},
-		{EKeys::R, EGatherAndHuntPuzzleMoveKind::PitchUp},
-		{EKeys::F, EGatherAndHuntPuzzleMoveKind::PitchDown},
-		{EKeys::S, EGatherAndHuntPuzzleMoveKind::Wait},
-		{EKeys::Down, EGatherAndHuntPuzzleMoveKind::Wait}};
-	for (const FMoveKey& MoveKey : MoveKeys)
-	{
-		if (Key == MoveKey.Key)
-		{
-			Planner->AddMove(MoveKey.Kind);
-			return FReply::Handled();
-		}
-	}
-
-	if (Key == EKeys::BackSpace || Key == EKeys::Delete)
-	{
-		Planner->RemoveSelectedMove();
-	}
-	else if (Key == EKeys::LeftBracket)
-	{
-		Planner->ShiftSelectedMove(-1);
-	}
-	else if (Key == EKeys::RightBracket)
-	{
-		Planner->ShiftSelectedMove(1);
-	}
-	else if (Key == EKeys::Escape)
-	{
-		Planner->SelectMove(INDEX_NONE);
-	}
-	else if (Key == EKeys::C)
-	{
-		InKeyEvent.IsShiftDown() ? Planner->ClearAll() : Planner->ClearSelectedTurtle();
-	}
-	else
-	{
-		return Super::NativeOnKeyDown(InGeometry, InKeyEvent);
-	}
-	return FReply::Handled();
+void UGatherAndHuntPlannerWidget::NativeTick(const FGeometry& MyGeometry, const float InDeltaTime)
+{
+	Super::NativeTick(MyGeometry, InDeltaTime);
+	FGatherAndHuntCameraInput::Tick(BoardView, Input, InDeltaTime);
 }
 
 int32 UGatherAndHuntPlannerWidget::FindChipAt(const FVector2D& ScreenPosition) const
@@ -1087,12 +1190,16 @@ FReply UGatherAndHuntPlannerWidget::NativeOnMouseButtonDown(const FGeometry& InG
 			PressedChipIndex = Chip;
 			PressScreenPosition = InMouseEvent.GetScreenSpacePosition();
 			bDraggingChip = false;
-			return FReply::Handled().CaptureMouse(TakeWidget()).SetUserFocus(TakeWidget());
+			FSlateApplication::Get().SetAllUserFocusToGameViewport();
+			return FReply::Handled().CaptureMouse(TakeWidget());
 		}
 	}
 
-	bOrbiting = true;
-	return FReply::Handled().CaptureMouse(TakeWidget()).SetUserFocus(TakeWidget());
+	// A click on empty space also takes the keyboard back from a text box or
+	// dropdown, to the game, where the input actions are.
+	CameraInput.BeginDrag(InMouseEvent);
+	FSlateApplication::Get().SetAllUserFocusToGameViewport();
+	return FReply::Handled().CaptureMouse(TakeWidget());
 }
 
 FReply UGatherAndHuntPlannerWidget::NativeOnMouseButtonUp(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
@@ -1113,9 +1220,9 @@ FReply UGatherAndHuntPlannerWidget::NativeOnMouseButtonUp(const FGeometry& InGeo
 		}
 		return FReply::Handled().ReleaseMouseCapture();
 	}
-	if (bOrbiting)
+	if (CameraInput.IsDragging())
 	{
-		bOrbiting = false;
+		CameraInput.EndDrag();
 		return FReply::Handled().ReleaseMouseCapture();
 	}
 	return Super::NativeOnMouseButtonUp(InGeometry, InMouseEvent);
@@ -1145,10 +1252,8 @@ FReply UGatherAndHuntPlannerWidget::NativeOnMouseMove(const FGeometry& InGeometr
 		}
 		return FReply::Handled();
 	}
-	if (bOrbiting && BoardView != nullptr)
+	if (CameraInput.HandleMouseMove(BoardView, InMouseEvent))
 	{
-		const FVector2D Delta = InMouseEvent.GetCursorDelta();
-		BoardView->OrbitCamera(Delta.X * 0.3f, -Delta.Y * 0.3f);
 		return FReply::Handled();
 	}
 	return Super::NativeOnMouseMove(InGeometry, InMouseEvent);

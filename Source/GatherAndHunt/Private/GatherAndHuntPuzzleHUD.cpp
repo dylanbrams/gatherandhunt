@@ -6,6 +6,8 @@
 #include "GameFramework/PlayerController.h"
 #include "GatherAndHuntBoardEditor.h"
 #include "GatherAndHuntBoardEditorWidget.h"
+#include "GatherAndHuntInput.h"
+#include "Framework/Application/SlateApplication.h"
 #include "GatherAndHuntPlannerWidget.h"
 #include "GatherAndHuntPuzzleBlueprintLibrary.h"
 #include "GatherAndHuntPuzzleBoardView.h"
@@ -73,6 +75,9 @@ bool AGatherAndHuntPuzzleHUD::TryInitialize()
 		PC,
 		PlannerWidgetClass != nullptr ? PlannerWidgetClass.Get() : UGatherAndHuntPlannerWidget::StaticClass());
 	PlannerWidget->Bind(Session, Planner, BoardView);
+	Input = NewObject<UGatherAndHuntInput>(this);
+	Input->Setup(PC);
+	PlannerWidget->BindInput(Input);
 
 	BoardEditorWidget = CreateWidget<UGatherAndHuntBoardEditorWidget>(
 		PC,
@@ -98,7 +103,7 @@ bool AGatherAndHuntPuzzleHUD::TryInitialize()
 	}
 
 	PlannerWidget->AddToViewport();
-	FocusWidget(PlannerWidget);
+	FocusGame();
 	if (bStartEditing)
 	{
 		SetBoardEditing(true);
@@ -136,6 +141,7 @@ bool AGatherAndHuntPuzzleHUD::SetBoardEditing(const bool bEditing)
 		BoardView->SetBoardEditor(BoardEditor);
 		PlannerWidget->RemoveFromParent();
 		BoardEditorWidget->AddToViewport();
+		Input->SetEnabled(false);
 		FocusWidget(BoardEditorWidget);
 	}
 	else
@@ -148,9 +154,27 @@ bool AGatherAndHuntPuzzleHUD::SetBoardEditing(const bool bEditing)
 		BoardEditorWidget->RemoveFromParent();
 		PlannerWidget->AddToViewport();
 		PlannerWidget->Refresh();
-		FocusWidget(PlannerWidget);
+		FocusGame();
 	}
 	return true;
+}
+
+void AGatherAndHuntPuzzleHUD::FocusGame()
+{
+	APlayerController* const PC = GetOwningPlayerController();
+	if (PC == nullptr)
+	{
+		return;
+	}
+	FInputModeGameAndUI InputMode;
+	InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+	InputMode.SetHideCursorDuringCapture(false);
+	PC->SetInputMode(InputMode);
+	FSlateApplication::Get().SetAllUserFocusToGameViewport();
+	if (Input != nullptr)
+	{
+		Input->SetEnabled(true);
+	}
 }
 
 void AGatherAndHuntPuzzleHUD::FocusWidget(UUserWidget* Widget)

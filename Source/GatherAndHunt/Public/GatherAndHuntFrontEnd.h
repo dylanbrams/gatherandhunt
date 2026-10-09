@@ -54,10 +54,23 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "GatherAndHunt|FrontEnd", meta = (WorldContext = "WorldContextObject"))
 	static void OpenMainMenu(const UObject* WorldContextObject);
 
+	// The ship on a turntable, for looking at art outside a puzzle.
+	UFUNCTION(BlueprintCallable, Category = "GatherAndHunt|FrontEnd", meta = (WorldContext = "WorldContextObject"))
+	static void OpenArtPreview(const UObject* WorldContextObject);
+
 	// bEdit starts in the board editor; a file that doesn't exist yet then
 	// becomes a new, empty puzzle saved under that name.
 	UFUNCTION(BlueprintCallable, Category = "GatherAndHunt|FrontEnd", meta = (WorldContext = "WorldContextObject"))
 	static void OpenPuzzle(const UObject* WorldContextObject, const FString& RelativeFilename, bool bEdit);
+
+	// The level select map (see UGatherAndHuntCampaign).
+	UFUNCTION(BlueprintCallable, Category = "GatherAndHunt|FrontEnd", meta = (WorldContext = "WorldContextObject"))
+	static void OpenCampaignMap(const UObject* WorldContextObject);
+
+	// A level entered from the map: winning it finishes CampaignNodeId, and
+	// leaving it goes back to the map.
+	UFUNCTION(BlueprintCallable, Category = "GatherAndHunt|FrontEnd", meta = (WorldContext = "WorldContextObject"))
+	static void OpenCampaignPuzzle(const UObject* WorldContextObject, const FString& RelativeFilename, const FString& CampaignNodeId);
 
 	// "My board" -> "My_board.dat": adds the extension, trims leading slashes
 	// and turns spaces into underscores.

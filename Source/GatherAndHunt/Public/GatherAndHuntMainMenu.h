@@ -44,6 +44,7 @@ private:
 	UPROPERTY(Transient) TObjectPtr<UGatherAndHuntPlannerButton> EditButton;
 	UPROPERTY(Transient) TObjectPtr<UEditableTextBox> NewFileBox;
 	UPROPERTY(Transient) TObjectPtr<UTextBlock> MessageText;
+	UPROPERTY(Transient) TObjectPtr<UWidget> OptionsPanel;
 	UPROPERTY(Transient) TArray<TObjectPtr<UGatherAndHuntPlannerButton>> PuzzleButtons;
 
 	TArray<FGatherAndHuntPuzzleListing> Puzzles;

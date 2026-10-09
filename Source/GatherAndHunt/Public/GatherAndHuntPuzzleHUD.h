@@ -7,6 +7,7 @@
 class AGatherAndHuntPuzzleBoardView;
 class UGatherAndHuntBoardEditor;
 class UGatherAndHuntBoardEditorWidget;
+class UGatherAndHuntInput;
 class UGatherAndHuntPlannerWidget;
 class UGatherAndHuntTurnPlanner;
 class UUserWidget;
@@ -56,7 +57,13 @@ public:
 
 private:
 	bool TryInitialize();
+	// Gives the keyboard to a widget that reads keys itself (the board editor).
 	void FocusWidget(UUserWidget* Widget);
+	// Gives the keyboard and gamepad to the game, where the input actions are.
+	void FocusGame();
+
+	UPROPERTY(Transient)
+	TObjectPtr<UGatherAndHuntInput> Input;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UGatherAndHuntTurnPlanner> Planner;

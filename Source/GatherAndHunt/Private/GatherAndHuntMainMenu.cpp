@@ -3,6 +3,7 @@
 #include "Components/EditableTextBox.h"
 #include "Components/ScrollBox.h"
 #include "GameFramework/PlayerController.h"
+#include "GatherAndHuntPlayerOptions.h"
 #include "GatherAndHuntWidgetBuilder.h"
 #include "Kismet/KismetSystemLibrary.h"
 
@@ -16,6 +17,9 @@ namespace
 		Edit,
 		New,
 		Rescan,
+		Campaign,
+		ArtPreview,
+		Options,
 		Quit
 	};
 
@@ -100,12 +104,21 @@ void UGatherAndHuntMainMenuWidget::BuildTree()
 		MessageText->SetAutoWrapText(true);
 		AddRow(Box, SizeTo(WidgetTree, MessageText, 400.0f), 6.0f);
 
-		AddRow(Box, Action(TEXT("Quit"), EMenuAction::Quit), 28.0f);
+		UHorizontalBox* const Footer = WidgetTree->ConstructWidget<UHorizontalBox>();
+		AddCell(Footer, Action(TEXT("Level select (Y)"), EMenuAction::Campaign), 8.0f);
+		AddCell(Footer, Action(TEXT("Art preview"), EMenuAction::ArtPreview), 8.0f);
+		AddCell(Footer, Action(TEXT("Options"), EMenuAction::Options), 8.0f);
+		AddCell(Footer, Action(TEXT("Quit"), EMenuAction::Quit));
+		AddRow(Box, Footer, 28.0f);
 		AddCell(Body, SizeTo(WidgetTree, MakePanel(WidgetTree, Box), 440.0f))->SetVerticalAlignment(VAlign_Top);
 	}
 
 	AddRow(Column, Body, 20.0f);
 	Place(Canvas, Column, FVector2D(0.5f, 0.5f), FVector2D::ZeroVector);
+
+	OptionsPanel = WidgetTree->ConstructWidget<UGatherAndHuntOptionsWidget>();
+	OptionsPanel->SetVisibility(ESlateVisibility::Collapsed);
+	Place(Canvas, OptionsPanel, FVector2D(1.0f, 0.0f), FVector2D(-16.0f, 16.0f));
 }
 
 void UGatherAndHuntMainMenuWidget::RefreshPuzzles()
@@ -228,6 +241,15 @@ void UGatherAndHuntMainMenuWidget::OnAction(const int32 InAction)
 		RefreshPuzzles();
 		ShowMessage(FString::Printf(TEXT("%d puzzle(s) found."), Puzzles.Num()), false);
 		break;
+	case EMenuAction::Campaign:
+		UGatherAndHuntFrontEnd::OpenCampaignMap(this);
+		break;
+	case EMenuAction::ArtPreview:
+		UGatherAndHuntFrontEnd::OpenArtPreview(this);
+		break;
+	case EMenuAction::Options:
+		OptionsPanel->SetVisibility(OptionsPanel->IsVisible() ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
+		break;
 	case EMenuAction::Quit:
 		UKismetSystemLibrary::QuitGame(this, GetOwningPlayer(), EQuitPreference::Quit, false);
 		break;
@@ -243,9 +265,10 @@ void UGatherAndHuntMainMenuWidget::ShowMessage(const FString& Message, const boo
 FReply UGatherAndHuntMainMenuWidget::NativeOnKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent)
 {
 	const FKey Key = InKeyEvent.GetKey();
-	if ((Key == EKeys::Up || Key == EKeys::Down) && Puzzles.Num() > 0)
+	const bool bDown = Key == EKeys::Down || Key == EKeys::Gamepad_DPad_Down;
+	if ((Key == EKeys::Up || Key == EKeys::Gamepad_DPad_Up || bDown) && Puzzles.Num() > 0)
 	{
-		SelectedIndex = FMath::Clamp(SelectedIndex + (Key == EKeys::Down ? 1 : -1), 0, Puzzles.Num() - 1);
+		SelectedIndex = FMath::Clamp(SelectedIndex + (bDown ? 1 : -1), 0, Puzzles.Num() - 1);
 		RefreshDetails();
 		if (PuzzleButtons.IsValidIndex(SelectedIndex))
 		{
@@ -253,9 +276,14 @@ FReply UGatherAndHuntMainMenuWidget::NativeOnKeyDown(const FGeometry& InGeometry
 		}
 		return FReply::Handled();
 	}
-	if (Key == EKeys::Enter)
+	if (Key == EKeys::Enter || Key == EKeys::Gamepad_FaceButton_Bottom)
 	{
 		OnAction(static_cast<int32>(EMenuAction::Play));
+		return FReply::Handled();
+	}
+	if (Key == EKeys::Gamepad_FaceButton_Top)
+	{
+		OnAction(static_cast<int32>(EMenuAction::Campaign));
 		return FReply::Handled();
 	}
 	return Super::NativeOnKeyDown(InGeometry, InKeyEvent);

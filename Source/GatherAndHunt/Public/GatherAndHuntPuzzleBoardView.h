@@ -60,6 +60,20 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "GatherAndHunt|BoardView")
 	void ZoomCamera(float Steps);
 
+	// Turns the camera where it stands, as OrbitCamera turns it about the point
+	// it is looking at.
+	UFUNCTION(BlueprintCallable, Category = "GatherAndHunt|BoardView")
+	void LookCamera(float DeltaYaw, float DeltaPitch);
+
+	// Flies the camera: Axes is (forward along the view, right, world up), each
+	// -1..1. Speed grows with the distance to the point it is looking at.
+	UFUNCTION(BlueprintCallable, Category = "GatherAndHunt|BoardView")
+	void FlyCamera(FVector Axes, float DeltaSeconds, bool bFast);
+
+	// Slides the camera sideways and up/down by a mouse drag, in pixels.
+	UFUNCTION(BlueprintCallable, Category = "GatherAndHunt|BoardView")
+	void PanCamera(float DeltaRight, float DeltaUp);
+
 	UFUNCTION(BlueprintCallable, Category = "GatherAndHunt|BoardView")
 	void FrameBoard();
 
@@ -78,11 +92,23 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GatherAndHunt|BoardView")
 	bool bShowScriptedPreview = true;
 
+	// Labels to show on objectives in place of their "+N", by objective id (the
+	// level select map names its level markers). Takes effect on the next
+	// RebuildBoard or RefreshObjectiveLabels.
+	TMap<int32, FString> ObjectiveLabels;
+
+	// Objectives drawn see-through with a dimmed label (the level select map's
+	// finished levels). Takes effect on the next RebuildBoard.
+	TSet<int32> FadedObjectiveIds;
+
+	// Relabels the objectives already on the board from ObjectiveLabels.
+	void RefreshObjectiveLabels();
+
 	// Shared role palette for pieces, paths and the planner UI.
 	UFUNCTION(BlueprintPure, Category = "GatherAndHunt|BoardView")
 	static FLinearColor GetRoleColor(EGatherAndHuntTurtleRole TurtleRole);
 
-	// Adds a key and fill light when the level has no directional light, so the
+	// Adds key, fill and under lights when the level has no directional light, so the
 	// board is readable in an empty map.
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GatherAndHunt|BoardView")
 	bool bAddLightingIfMissing = true;
@@ -173,6 +199,10 @@ private:
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<AGatherAndHuntPuzzlePieceActor>> Pieces;
 
+	// The objectives among Pieces, by objective id.
+	UPROPERTY(Transient)
+	TMap<int32, TObjectPtr<AGatherAndHuntPuzzlePieceActor>> ObjectivePieces;
+
 	// Board size the camera was last framed for.
 	FIntVector FramedGridSize = FIntVector::ZeroValue;
 
@@ -189,6 +219,10 @@ private:
 	// has a "Color" parameter.
 	UPROPERTY(Transient)
 	TObjectPtr<UMaterialInterface> TintableMaterial;
+
+	// As TintableMaterial, but the colour's alpha is its opacity.
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInterface> TranslucentMaterial;
 
 	float CellSize = 100.0f;
 };

@@ -161,7 +161,6 @@ bool FGatherAndHuntTutorialSolutionsTest::RunTest(const FString&)
 		const TCHAR* MustFail;
 	};
 	const FSolution Solutions[] = {
-		{TEXT("Act1/01_FirstSteps"), {TEXT("FF")}, nullptr},
 		{TEXT("Act1/02_Turning"), {TEXT("FFLFF")}, nullptr},
 		{TEXT("Act1/03_Obstacle"), {TEXT("FLFRFFFRF")}, TEXT("FFFF")},
 		{TEXT("Act1/04_Gathering"), {TEXT("LFRFFFLFF"), TEXT("RFFLFLFFFF"), TEXT("RF")}, nullptr},

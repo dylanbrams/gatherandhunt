@@ -1,0 +1,56 @@
+{
+	"MapBoard": "Campaign/Map",
+	"StartingMoves": 1,
+	"StartingMotions": ["Forward"],
+	"Nodes": [
+		{
+			"Id": "act1-02",
+			"Title": "Turning",
+			"Cell": {"X": 1, "Y": 3, "Z": 0},
+			"Puzzle": "Act1/02_Turning",
+			"Reward": {"Moves": 3, "Motions": ["YawLeft", "YawRight"]}
+		},
+		{
+			"Id": "act1-03",
+			"Title": "Obstacle",
+			"Cell": {"X": 1, "Y": 5, "Z": 0},
+			"Puzzle": "Act1/03_Obstacle",
+			"Reward": {"Moves": 3}
+		},
+		{
+			"Id": "act1-04",
+			"Title": "Gathering",
+			"Cell": {"X": 4, "Y": 5, "Z": 0},
+			"Puzzle": "Act1/04_Gathering",
+			"Reward": {"Moves": 2}
+		},
+		{
+			"Id": "act1-05",
+			"Title": "Up High",
+			"Cell": {"X": 6, "Y": 1, "Z": 0},
+			"Puzzle": "Act1/05_UpHigh",
+			"Reward": {"Moves": 1, "Motions": ["PitchUp", "PitchDown"]}
+		},
+		{
+			"Id": "act1-06",
+			"Title": "The Chaser",
+			"Cell": {"X": 6, "Y": 3, "Z": 2},
+			"Puzzle": "Act1/06_TheChaser",
+			"Reward": {"Moves": 2, "Motions": ["Wait"]}
+		},
+		{
+			"Id": "act2-01",
+			"Title": "First",
+			"Cell": {"X": 8, "Y": 4, "Z": 1},
+			"Puzzle": "Act2/01_First",
+			"Reward": {"Moves": 2}
+		},
+		{
+			"Id": "act2-02",
+			"Title": "Duo Ships",
+			"Cell": {"X": 8, "Y": 1, "Z": 2},
+			"Puzzle": "Act2/02_DuoShips",
+			"Reward": {"Moves": 2}
+		}
+	]
+}

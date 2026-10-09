@@ -8,6 +8,7 @@
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
 #include "GameFramework/SpringArmComponent.h"
+#include "GatherAndHuntArtSettings.h"
 #include "GatherAndHuntBoardEditor.h"
 #include "GatherAndHuntPuzzlePieceActor.h"
 #include "GatherAndHuntPuzzlePlaybackComponent.h"
@@ -29,6 +30,10 @@ namespace
 	const FLinearColor HunterColor(0.9f, 0.05f, 0.05f);
 	const FLinearColor ObjectiveColor(1.0f, 0.8f, 0.0f);
 	const FLinearColor GrassColor(0.12f, 0.38f, 0.08f);
+
+	// Objectives in FadedObjectiveIds.
+	constexpr float FadedObjectiveOpacity = 0.3f;
+	const FColor FadedLabelColor(150, 150, 150);
 
 	// How far the grass field reaches past the board, in cells.
 	constexpr float GroundMarginCells = 30.0f;
@@ -63,6 +68,8 @@ AGatherAndHuntPuzzleBoardView::AGatherAndHuntPuzzleBoardView()
 	ConeMesh = ConeFinder.Object;
 	static ConstructorHelpers::FObjectFinder<UMaterialInterface> MaterialFinder(TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
 	TintableMaterial = MaterialFinder.Object;
+	static ConstructorHelpers::FObjectFinder<UMaterialInterface> TranslucentFinder(TEXT("/Engine/EngineDebugMaterials/M_SimpleTranslucent.M_SimpleTranslucent"));
+	TranslucentMaterial = TranslucentFinder.Object;
 
 	Root = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
 	RootComponent = Root;
@@ -181,6 +188,8 @@ void AGatherAndHuntPuzzleBoardView::EnsureLighting()
 	};
 	AddLight(FRotator(-50.0f, -35.0f, 0.0f), 6.0f, 1);
 	AddLight(FRotator(-30.0f, 145.0f, 0.0f), 2.5f, 0);
+	// From below, so undersides aren't black when the camera drops under a piece.
+	AddLight(FRotator(60.0f, 20.0f, 0.0f), 2.5f, 0);
 }
 
 void AGatherAndHuntPuzzleBoardView::ClearPieces()
@@ -195,6 +204,7 @@ void AGatherAndHuntPuzzleBoardView::ClearPieces()
 		}
 	}
 	Pieces.Reset();
+	ObjectivePieces.Reset();
 }
 
 void AGatherAndHuntPuzzleBoardView::RebuildBoard(const bool bReframe)
@@ -216,26 +226,40 @@ void AGatherAndHuntPuzzleBoardView::RebuildBoard(const bool bReframe)
 	const FGatherAndHuntPuzzleBoardSnapshot Snapshot = Session->GetCurrentBoardSnapshot();
 	const float PieceScale = CellSize / BasicShapeSize;
 
-	auto SpawnPiece = [&](UStaticMesh* Mesh, const FLinearColor& Color, const FRotator& MeshRotation, float Scale, const FString& Label)
+	auto SpawnPiece = [&](UStaticMesh* Mesh, const FLinearColor& Color, const FRotator& MeshRotation, float Scale, const FString& Label, UMaterialInterface* Material = nullptr)
 	{
 		FActorSpawnParameters Params;
 		Params.Owner = this;
 		Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 		AGatherAndHuntPuzzlePieceActor* const Piece = World->SpawnActor<AGatherAndHuntPuzzlePieceActor>(Params);
-		Piece->Setup(Mesh, TintableMaterial, Color, MeshRotation, Scale, Label);
+		Piece->Setup(Mesh, Material != nullptr ? Material : TintableMaterial.Get(), Color, MeshRotation, Scale, Label);
 		Pieces.Add(Piece);
 		return Piece;
 	};
 
+	const UGatherAndHuntArtSettings* const Art = GetDefault<UGatherAndHuntArtSettings>();
+	UStaticMesh* const ShipMesh = Art->ShipMesh.LoadSynchronous();
+
 	for (const FGatherAndHuntPuzzleTurtleState& Turtle : Snapshot.Turtles)
 	{
-		// Cones point along +Z; pitch -90 turns the tip to the actor's forward (+X).
-		AGatherAndHuntPuzzlePieceActor* const Piece = SpawnPiece(
-			ConeMesh,
-			GetRoleColor(Turtle.Role),
-			FRotator(-90.0f, 0.0f, 0.0f),
-			PieceScale * 0.6f,
-			FString::Printf(TEXT("T%d"), Turtle.TurtleId));
+		const FString Label = FString::Printf(TEXT("T%d"), Turtle.TurtleId);
+		AGatherAndHuntPuzzlePieceActor* Piece = nullptr;
+		if (ShipMesh != nullptr)
+		{
+			// The skin shows the role, in place of the placeholder's tint.
+			FActorSpawnParameters Params;
+			Params.Owner = this;
+			Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+			Piece = World->SpawnActor<AGatherAndHuntPuzzlePieceActor>(Params);
+			Piece->SetupArt(ShipMesh, Art->LoadSkinForRole(Turtle.Role), Art->ShipMeshRotation, CellSize * Art->ShipCellFill, Label);
+			Art->AddShipGlows(Piece, CellSize * Art->ShipCellFill);
+			Pieces.Add(Piece);
+		}
+		else
+		{
+			// Cones point along +Z; pitch -90 turns the tip to the actor's forward (+X).
+			Piece = SpawnPiece(ConeMesh, GetRoleColor(Turtle.Role), FRotator(-90.0f, 0.0f, 0.0f), PieceScale * 0.6f, Label);
+		}
 		Playback->RegisterTurtleActor(Turtle.TurtleId, Piece);
 	}
 
@@ -256,12 +280,21 @@ void AGatherAndHuntPuzzleBoardView::RebuildBoard(const bool bReframe)
 	for (const FGatherAndHuntPuzzleObjectiveState& Objective : Snapshot.Objectives)
 	{
 		const float ValueScale = FMath::Lerp(0.3f, 0.6f, FMath::Clamp(Objective.PointValue / 10.0f, 0.0f, 1.0f));
+		const FString* const CustomLabel = ObjectiveLabels.Find(Objective.ObjectiveId);
+		const FString Label = CustomLabel != nullptr ? *CustomLabel : FString::Printf(TEXT("+%d"), Objective.PointValue);
+		const bool bFaded = FadedObjectiveIds.Contains(Objective.ObjectiveId) && TranslucentMaterial != nullptr;
 		AGatherAndHuntPuzzlePieceActor* const Piece = SpawnPiece(
 			SphereMesh,
-			ObjectiveColor,
+			bFaded ? ObjectiveColor.CopyWithNewOpacity(FadedObjectiveOpacity) : ObjectiveColor,
 			FRotator::ZeroRotator,
 			PieceScale * ValueScale,
-			FString::Printf(TEXT("+%d"), Objective.PointValue));
+			Label,
+			bFaded ? TranslucentMaterial.Get() : nullptr);
+		if (bFaded)
+		{
+			Piece->SetLabel(Label, FadedLabelColor);
+		}
+		ObjectivePieces.Add(Objective.ObjectiveId, Piece);
 		Playback->RegisterObjectiveActor(Objective.ObjectiveId, Piece);
 	}
 
@@ -480,6 +513,43 @@ void AGatherAndHuntPuzzleBoardView::ZoomCamera(const float Steps)
 	CameraArm->TargetArmLength = FMath::Clamp(CameraArm->TargetArmLength * FMath::Pow(0.9f, Steps), CellSize * 2.0f, CellSize * 200.0f);
 }
 
+void AGatherAndHuntPuzzleBoardView::LookCamera(const float DeltaYaw, const float DeltaPitch)
+{
+	// The camera hangs off the arm's far end. Keep that end where it is and
+	// swing the point it looks at instead.
+	const FVector CameraLocation = CameraArm->GetComponentLocation() - CameraArm->GetRelativeRotation().Vector() * CameraArm->TargetArmLength;
+	OrbitCamera(DeltaYaw, DeltaPitch);
+	CameraArm->SetWorldLocation(CameraLocation + CameraArm->GetRelativeRotation().Vector() * CameraArm->TargetArmLength);
+}
+
+void AGatherAndHuntPuzzleBoardView::FlyCamera(const FVector Axes, const float DeltaSeconds, const bool bFast)
+{
+	const FRotator Rotation = CameraArm->GetRelativeRotation();
+	const FVector Direction = Rotation.Vector() * Axes.X + FRotationMatrix(Rotation).GetUnitAxis(EAxis::Y) * Axes.Y + FVector::UpVector * Axes.Z;
+	// Crossing the view takes about the same time whether zoomed in or out.
+	const float Speed = FMath::Max(CellSize * 3.0f, CameraArm->TargetArmLength * 0.5f) * (bFast ? 3.0f : 1.0f);
+	CameraArm->AddWorldOffset(Direction.GetClampedToMaxSize(1.0f) * Speed * DeltaSeconds);
+}
+
+void AGatherAndHuntPuzzleBoardView::PanCamera(const float DeltaRight, const float DeltaUp)
+{
+	const FRotationMatrix Axes(CameraArm->GetRelativeRotation());
+	const float UnitsPerPixel = CameraArm->TargetArmLength * 0.0012f;
+	CameraArm->AddWorldOffset((Axes.GetUnitAxis(EAxis::Y) * DeltaRight + Axes.GetUnitAxis(EAxis::Z) * DeltaUp) * UnitsPerPixel);
+}
+
+void AGatherAndHuntPuzzleBoardView::RefreshObjectiveLabels()
+{
+	for (const TPair<int32, TObjectPtr<AGatherAndHuntPuzzlePieceActor>>& Entry : ObjectivePieces)
+	{
+		const FString* const Label = ObjectiveLabels.Find(Entry.Key);
+		if (Label != nullptr && IsValid(Entry.Value))
+		{
+			Entry.Value->SetLabel(*Label, FadedObjectiveIds.Contains(Entry.Key) ? FadedLabelColor : FColor::White);
+		}
+	}
+}
+
 bool AGatherAndHuntPuzzleBoardView::IsPlayingBack() const
 {
 	return Playback != nullptr && Playback->IsPlaying();
@@ -499,7 +569,7 @@ void AGatherAndHuntPuzzleBoardView::Tick(const float DeltaSeconds)
 	{
 		if (IsValid(Piece))
 		{
-			Piece->FaceLabelTowards(ViewLocation);
+			Piece->UpdateForView(ViewLocation);
 		}
 	}
 }

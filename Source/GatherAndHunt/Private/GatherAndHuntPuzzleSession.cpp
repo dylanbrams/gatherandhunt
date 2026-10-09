@@ -167,7 +167,7 @@ bool UGatherAndHuntPuzzleSession::SubmitSoloTurnPlan(
 	const turtlesim::PlanValidation Validation = turtlesim::ValidateTurnPlan(
 		CurrentBoardState,
 		PlayerPlan,
-		turtlesim::DefaultMoveBudget);
+		GetMoveBudget());
 	OutValidation = BuildValidation(Validation);
 	if (!OutValidation.bIsValid)
 	{
@@ -196,6 +196,7 @@ FGatherAndHuntPuzzlePlanValidation UGatherAndHuntPuzzleSession::CheckPuzzleRules
 	Result.bIsValid = true;
 
 	int32 TurtlesMoved = 0;
+	int32 MovesUsed = 0;
 	for (const FGatherAndHuntPuzzleTurtlePlan& TurtlePlan : PlayerPlan.TurtlePlans)
 	{
 		if (TurtlePlan.Moves.Num() == 0)
@@ -205,6 +206,16 @@ FGatherAndHuntPuzzlePlanValidation UGatherAndHuntPuzzleSession::CheckPuzzleRules
 		++TurtlesMoved;
 		for (int32 Index = 0; Index < TurtlePlan.Moves.Num(); ++Index)
 		{
+			if (MaxMovesPerTurn > 0 && ++MovesUsed > MaxMovesPerTurn)
+			{
+				Result.bIsValid = false;
+				Result.ErrorMessage = MaxMovesPerTurn == 1
+					? FString(TEXT("You only have one move."))
+					: FString::Printf(TEXT("You only have %d moves."), MaxMovesPerTurn);
+				Result.OffendingTurtleId = TurtlePlan.TurtleId;
+				Result.OffendingMoveIndex = Index;
+				return Result;
+			}
 			if (!IsMoveAllowed(TurtlePlan.Moves[Index]))
 			{
 				Result.bIsValid = false;
@@ -226,6 +237,12 @@ FGatherAndHuntPuzzlePlanValidation UGatherAndHuntPuzzleSession::CheckPuzzleRules
 		}
 	}
 	return Result;
+}
+
+int32 UGatherAndHuntPuzzleSession::GetMoveBudget() const
+{
+	// Under a move cap the cost tiers don't apply; CheckPuzzleRules counts moves.
+	return MaxMovesPerTurn > 0 ? MAX_int32 : turtlesim::DefaultMoveBudget;
 }
 
 void UGatherAndHuntPuzzleSession::BuildScriptedPlansForCurrentTurn(turtlesim::TurnPlan& OutAllyPlan, turtlesim::TurnPlan& OutOpponentPlan) const

@@ -82,6 +82,25 @@ void UGatherAndHuntFrontEnd::OpenMainMenu(const UObject* WorldContextObject)
 		TEXT("game=/Script/GatherAndHunt.GatherAndHuntMenuGameMode"));
 }
 
+void UGatherAndHuntFrontEnd::OpenArtPreview(const UObject* WorldContextObject)
+{
+	UGameplayStatics::OpenLevel(WorldContextObject, FName(FrontEndMap), true,
+		TEXT("game=/Script/GatherAndHunt.GatherAndHuntArtPreviewGameMode"));
+}
+
+void UGatherAndHuntFrontEnd::OpenCampaignMap(const UObject* WorldContextObject)
+{
+	UGameplayStatics::OpenLevel(WorldContextObject, FName(FrontEndMap), true,
+		TEXT("game=/Script/GatherAndHunt.GatherAndHuntCampaignGameMode"));
+}
+
+void UGatherAndHuntFrontEnd::OpenCampaignPuzzle(const UObject* WorldContextObject, const FString& RelativeFilename, const FString& CampaignNodeId)
+{
+	UGameplayStatics::OpenLevel(WorldContextObject, FName(FrontEndMap), true, FString::Printf(
+		TEXT("game=/Script/GatherAndHunt.GatherAndHuntPuzzleGameMode?Puzzle=%s?CampaignNode=%s"),
+		*NormalizePuzzleFilename(RelativeFilename), *CampaignNodeId));
+}
+
 void UGatherAndHuntFrontEnd::OpenPuzzle(const UObject* WorldContextObject, const FString& RelativeFilename, const bool bEdit)
 {
 	FString Options = TEXT("game=/Script/GatherAndHunt.GatherAndHuntPuzzleGameMode");

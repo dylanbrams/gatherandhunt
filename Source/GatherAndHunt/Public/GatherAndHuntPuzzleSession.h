@@ -83,8 +83,22 @@ public:
 	UFUNCTION(BlueprintPure, Category = "GatherAndHunt|Puzzle")
 	int32 GetMaxTurtlesMovedPerTurn() const { return LoadedLevelSave != nullptr ? LoadedLevelSave->MaxTurtlesMovedPerTurn : 0; }
 
+	// Caps how many moves the player may queue in one turn, counted across their
+	// ships; 0 = no cap. A cap replaces the cost budget, so every move counts as
+	// one. The level select map sets it; it isn't part of the board file and
+	// stays until changed.
+	UFUNCTION(BlueprintCallable, Category = "GatherAndHunt|Puzzle")
+	void SetMaxMovesPerTurn(int32 MaxMoves) { MaxMovesPerTurn = FMath::Max(0, MaxMoves); }
+
+	UFUNCTION(BlueprintPure, Category = "GatherAndHunt|Puzzle")
+	int32 GetMaxMovesPerTurn() const { return MaxMovesPerTurn; }
+
+	// Cost units the player's plan may spend in one turn.
+	UFUNCTION(BlueprintPure, Category = "GatherAndHunt|Puzzle")
+	int32 GetMoveBudget() const;
+
 	// Checks a player plan against the puzzle's rules (allowed moves, turtles
-	// per turn). The sim's own checks (budget, ownership, pitch) are separate.
+	// per turn, move cap). The sim's own checks (budget, ownership, pitch) are separate.
 	UFUNCTION(BlueprintPure, Category = "GatherAndHunt|Puzzle")
 	FGatherAndHuntPuzzlePlanValidation CheckPuzzleRules(const FGatherAndHuntPuzzleTurnPlan& PlayerPlan) const;
 
@@ -160,6 +174,7 @@ private:
 	bool bHasLastTurnResult = false;
 	EGatherAndHuntPuzzleOutcome Outcome = EGatherAndHuntPuzzleOutcome::NotLoaded;
 	bool bHasUnsavedChanges = false;
+	int32 MaxMovesPerTurn = 0;
 
 	// Player-team turtles moved by the script rather than the player.
 	TSet<int32> ScriptedAllyIds;

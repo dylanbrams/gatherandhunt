@@ -10,19 +10,23 @@ The game starts on the C++ main menu (`AGatherAndHuntMenuGameMode` on the engine
 empty `/Engine/Maps/Entry`, set as `GameDefaultMap` / `GlobalDefaultGameMode`). It
 lists the board files by act and order; **Play** opens the planner, **Edit board**
 opens the board editor, and **New puzzle** starts an empty board under a new file
-name. Every screen runs on the Entry map with its GameMode picked on the URL, so no
+name. **Level select** opens the campaign map (see `LevelSelect.md`). Every screen runs on the Entry map with its GameMode picked on the URL, so no
 map or Blueprint assets are involved (`UGatherAndHuntFrontEnd` does the travel).
 
 To skip the menu:
 
 ```
-UnrealEditor.exe GatherAndHunt.uproject "/Engine/Maps/Entry?game=/Script/GatherAndHunt.GatherAndHuntPuzzleGameMode?Puzzle=Act1/01_FirstSteps" -game -windowed -ResX=1600 -ResY=900
+UnrealEditor.exe GatherAndHunt.uproject "/Engine/Maps/Entry?game=/Script/GatherAndHunt.GatherAndHuntPuzzleGameMode?Puzzle=Act1/02_Turning" -game -windowed -ResX=1600 -ResY=900
 ```
 
 `?Puzzle=` is a path under `Content/BoardSetups` (the `.dat` is optional). Add
 `?Edit` to open in the board editor; with `?Edit`, a file that doesn't exist yet
-becomes a new empty board. You can also pick a file in the planner's dropdown and
-press **Load** at runtime.
+becomes a new empty board. You can also pick a file in the dropdown of the
+planner's **AUTHORING** menu (bottom left) and press **Load** at runtime.
+
+The authoring controls described below (script mode, the board editor, saving)
+live in that menu. A level opened from the level select map only has it once the
+map's first level is finished; see `LevelSelect.md`.
 
 ## Turtle roles
 
@@ -50,16 +54,43 @@ The board editor sets roles (see below).
 
 ## Controls
 
-| Key | Action |
+The plain screen is the picture move buttons (the prototype's arrow art, one per
+move the puzzle allows), **Undo** and **Execute**. **Show moves** brings out the
+rest: the queued moves and their reordering, the budget, the turn's numbers and
+the key list. The ship list shows by itself once a puzzle has more than one ship.
+
+**Tab** switches what the letter keys do. They start on the camera. These are
+the default keys; the gamepad's, and how a player changes either, are in `Input.md`.
+
+| Key, camera mode (default) | Action |
+|---|---|
+| W / S, Up / Down | Fly forward / back along the view |
+| A / D, Left / Right | Strafe |
+| Q / E | Down / up |
+| Shift | Faster |
+
+| Key, move mode (after Tab) | Action |
 |---|---|
 | W / Up | Forward |
 | A / Left, D / Right | Yaw left / right |
 | R / F | Pitch up / down |
 | S / Down | Wait |
+
+| Mouse | Action |
+|---|---|
+| Left drag | Orbit the point the camera is looking at |
+| Right drag | Look around from where the camera is |
+| Middle drag | Slide sideways and up / down |
+| Wheel | Zoom |
+
+| Key, either mode | Action |
+|---|---|
 | Backspace / Delete | Delete selected move (or the last one) |
-| [ / ] | Shift selected move left / right |
-| Esc | Cursor to end (new moves append) |
-| Tab / Shift+Tab, 1-9 | Select turtle |
+| , / . | Shift selected move left / right |
+| [ / ], 1-9 | Previous / next ship, ship by row |
+| Esc | Cursor to end (new moves append); with no move selected, leave the level |
+| M | Show / hide moves |
+| F5 | Restart the level |
 | C / Shift+C | Clear turtle / clear all |
 | P | Toggle scripted turtles in the preview |
 | Enter | Submit turn (or skip playback); in script mode, save the scripted turn |
@@ -67,7 +98,6 @@ The board editor sets roles (see below).
 | B | Open the board editor |
 | Ctrl+S | Save the loaded board file |
 | Home | Reframe camera |
-| Mouse drag / wheel | Orbit / zoom |
 
 Move chips in the queue:
 
@@ -78,7 +108,8 @@ Move chips in the queue:
 
 Chip colour shows its cost tier (grey 1, amber 2, red 3); the offending move is
 red when the plan is invalid. The turtle list shows each turtle's role as a
-coloured swatch and tag.
+coloured swatch and tag: the player's are `SHIP 1`, `SHIP 2`, numbered by row
+(the 1-9 key that selects them).
 
 ## Authoring scripted turns
 
@@ -215,4 +246,5 @@ keeps a version 1 file in that set.
 - Multiplayer: the planner binds to a puzzle session. `TurtleGame` needs an adapter
   that feeds it the replicated board and submits through `ServerSubmitTurnPlan`.
   The turn loop it would plug into is described in `MultiplayerTurnLoop.md`.
-- Real art: pieces are engine basic shapes.
+- Real art: turtles use the scanned ship (see `ShipArt.md`); every other piece is
+  still an engine basic shape.
